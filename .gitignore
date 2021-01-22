@@ -42,6 +42,8 @@ R/*.pdf
 /data/NEMO_Nordic_SCOBI
 /data/depth_geo_tif
 /data/shapefiles
+/data/stomach_data
+/data/for_analysis/stomach
 
 # Presentations
 /presentations
