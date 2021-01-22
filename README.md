@@ -3,6 +3,7 @@
 This repository contains data and code for producing spatiotemporal indicies of abundance (using the R-package `sdmTMB()`[Anderson et al. (2020)](https://github.com/pbs-assess/sdmTMB)) of benthic invertebrate groups in the Baltic Sea. Part of bentfish project.
 
 How to navigate this repo: 
+
 `data`: Contains benthic data, some covariate data and cleaned data for analysis
 
 `R`: Code for compiling data and for calculating indices
