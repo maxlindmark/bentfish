@@ -1,0 +1,1277 @@
+---
+title: "Stomach data cleaning"
+author: "Max Lindmark"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.asp = 0.618,
+  fig.align ='center'
+)
+```
+
+**Data to merge:**
+Kevin:
+  - BITS (trawl data on cod & flounder)
+  - INSPIRE (gillnet [survey & commercial, see cruise column]
+
+**Federico**
+  - BITS (trawl data on cod & flounder) * Federico's BITS data should contain all data that Kevin has used, but with more columns 
+  - BIAS (pelagic trawl data)
+
+
+**Data to add:**
+  - BITS (trawl data on cod & flounder)
+  - BIAS (pelagic trawl data)
+
+The goal is to create a single data base for diets using all these sources
+
+## First load packages
+```{r load libraries, message=FALSE, warning=TRUE}
+rm(list = ls())
+
+# Load libraries, install if needed
+library(tidyverse); theme_set(theme_classic())
+library(readxl)
+library(tidylog)
+library(RCurl)
+library(RColorBrewer)
+library(patchwork)
+library(janitor)
+library(mapplots)
+library(tidyverse)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(forcats)
+library(gapminder)
+library(viridis)
+library(ggridges)
+
+# Define a function for plotting maps...
+theme_map <- function () { 
+  theme(
+    text = element_text(size = 8),
+    legend.position = "bottom", 
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    axis.text = element_text(size = 6))
+}
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+xlim <- c(8, 22)
+ylim <- c(54, 60)
+```
+
+## 1. Merge Federicos and Kevins data
+```{r merge fede and kev, message=FALSE, warning=TRUE}
+# Read in data
+fed <- read.csv("data/stomach_data/Master_federico_cod.csv", sep = ";")
+
+head(fed)
+str(fed)
+nrow(fed)
+
+kev <- read.csv("data/stomach_data/Master_Kevin_updated.csv", sep = ";")
+
+head(kev)
+str(kev)
+nrow(kev)
+
+# Check how coordinates are reported
+sort(unique(fed$Lat))
+sort(unique(fed$Long))
+str(fed$Lat)
+str(fed$Long)
+
+# Make them numeric
+fed$Lat <- as.numeric(gsub(",", "\\.", fed$Lat))
+fed$Long <- as.numeric(gsub(",", "\\.", fed$Long))
+
+# For these coordinates, we can use the function Fede provided:
+format.position <- function(x){
+  sign.x <- sign(x)
+  x <- abs(x)
+  x <- ifelse(nchar(x)==3, paste("0",x,sep=""), x)
+  x <- ifelse(nchar(x)==2, paste("00",x,sep=""), x)
+  x <- ifelse(nchar(x)==1, paste("000",x,sep=""), x)
+  dec.x <- as.numeric(paste(substring(x,1,2)))+as.numeric(paste(substring(x,3,4)))/60
+  dec.x <- sign.x*dec.x
+}
+
+# Apply function
+fed$Lat <- format.position(fed$Lat)
+fed$Long <- format.position(fed$Long)
+
+# Looks good! 
+ggplot(fed, aes(Long, Lat)) + geom_point()
+
+# Now check Kevin's data
+sort(unique(kev$lat))
+sort(unique(kev$long))
+str(kev$lat)
+str(kev$long)
+
+# Same problem here. Will change to numeric
+kev$lat <- as.numeric(gsub(",", "\\.", kev$lat))
+kev$long <- as.numeric(gsub(",", "\\.", kev$long))
+
+# Some really strange latitudes. Find out which they are
+ggplot(kev, aes(long, lat)) + geom_point()
+
+t <- filter(kev, lat < 45)
+t <- t %>% mutate(test_id = paste(coun., ship, date, sep = "_"))
+strange_ids <- unique(t$test_id)
+
+kev %>%
+  mutate(test_id = paste(coun., ship, date, sep = "_")) %>% 
+  filter(!test_id %in% strange_ids) %>% 
+  ggplot(., aes(long, lat)) + geom_point()
+
+# Looks much better without them, so I will try and assign lat's and long's to them based on their Ices rectangle
+# Later when we add the haul data we can correct this
+kev %>%
+  mutate(test_id = paste(coun., ship, date, sep = "_")) %>% 
+  filter(test_id %in% strange_ids) %>% 
+  distinct(ices)
+
+sub_kev <- kev %>%
+  mutate(test_id = paste(coun., ship, date, sep = "_")) %>% 
+  filter(test_id %in% strange_ids)
+
+kev <- kev %>%
+  mutate(test_id = paste(coun., ship, date, sep = "_")) %>% 
+  filter(!test_id %in% strange_ids)
+
+sub_kev <- sub_kev %>%
+  mutate(lat = 56.25) %>% 
+  mutate(lat = ifelse(ices %in% c("40G4", "40G5", "40G6"), 55.75, lat)) %>%
+  mutate(lat = ifelse(ices %in% c("43G8", "43G9"), 57.25, lat)) %>% 
+  mutate(lat = ifelse(ices == "44G9", 57.75, lat)) %>% 
+  mutate(long = 14.5) %>% 
+  mutate(long = ifelse(ices == "40G5", 15.5, long)) %>% 
+  mutate(long = ifelse(ices == "40G6", 16.5, long)) %>%
+  mutate(long = ifelse(ices == "41G7", 17.5, long)) %>% 
+  mutate(long = ifelse(ices == "44G9", 19.5, long)) %>%
+  mutate(long = ifelse(ices == "44G9", 19.5, long)) %>%
+  mutate(long = ifelse(ices == "43G8", 18.5, long)) %>%
+  mutate(long = ifelse(ices == "43G9", 19.5, long)) 
+  
+# Ok, now add them back
+kev <- bind_rows(kev, sub_kev) %>% dplyr::select(-test_id)
+
+# Final check - looks ok!
+ggplot(kev, aes(long, lat)) + geom_point()
+
+# Next find which data are overlapping
+fed <- fed %>% mutate(cruise_year_quarter_pred_id = paste(Year, Quarter, Cruise, Predator.code, sep = "_"))
+kev <- kev %>% mutate(cruise_year_quarter_pred_id = paste(year, quarter, cruise, pred.code, sep = "_"))
+
+# Which data are common?
+common_cruise_year_quarter_pred_id <- unique(fed$cruise_year_quarter_pred_id[fed$cruise_year_quarter_pred_id %in% kev$cruise_year_quarter_pred_id])
+
+# Which data are in Fedes data but not in Kevins?
+not_in_kev <- unique(fed$cruise_year_quarter_pred_id[!fed$cruise_year_quarter_pred_id %in% kev$cruise_year_quarter_pred_id])
+
+# Which data are in Fedes data but not in Kevins?
+not_in_fed <- sort(unique(kev$cruise_year_quarter_pred_id[!kev$cruise_year_quarter_pred_id %in% fed$cruise_year_quarter_pred_id]))
+
+# Subset the data from Fedes that doesn't already exist in Kevins data
+fed_to_add <- fed %>% filter(cruise_year_quarter_pred_id %in% not_in_kev)
+
+# Before we can add we need to standardize the colnames...
+data.frame(fed_cols = colnames(fed_to_add)[1:50],
+           kev_cols = colnames(kev)[1:50])
+
+# First add the additional columns in Fed data to Kevin (can add the real values later by matching with catch data).
+# The first 50 columns are the same (albeit with different names). 
+
+# Change colnames in kev to the ones used in fed because I prefers them (tend to be more informative)
+# Use only the first 50 columns
+colnames(kev)[1:50] <- colnames(fed_to_add)[1:50]
+
+# Now merge data - use only the first 50 columns, the rest seems to be data from BIAS that
+# Fede added in. We will do that later I think (instead of giving them all NA in Kevins data),
+# depending on which surveys we use in the end
+
+kev <- kev[, 1:50]
+fed_to_add <- fed_to_add[, 1:50]
+
+kev$source <- "Kevin's MSC"
+fed_to_add$source <- "Federicos's MSC"
+
+df_full <- rbind(kev, fed_to_add)
+
+# Which data do I have so far?
+df_full %>%
+  mutate(cruise_year_quarter_pred_id = paste(Year, Quarter, Cruise, Predator.code, sep = "_")) %>%
+  distinct(cruise_year_quarter_pred_id) %>% 
+  arrange(desc(cruise_year_quarter_pred_id))
+
+# Explore the combined data:
+# Are there NA cruises?
+unique(df_full$Cruise)
+
+# Change name of the un-named cruise...
+df_full <- df_full %>% mutate(Cruise = ifelse(Cruise == "", "No name", Cruise))
+
+# NA latitudes?
+df_full %>% 
+  mutate(Coord = coalesce(Lat, -9)) %>% 
+  mutate(Coord = ifelse(Lat == -9, "NA", "TRUE")) %>% 
+  group_by(Year, Quarter, Cruise) %>% 
+  mutate(n = n()) %>% 
+  ggplot(., aes(factor(Year), n, fill = Coord)) +
+  facet_wrap(~Cruise, scales = "free") + 
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  ggtitle("Proportion of NA Latitudes by Cruise")
+
+# How are rectangles coded?
+unique(df_full$Square)
+unique(df_full$Rect)
+ggplot(df_full, aes(Square, as.character(Rect))) + geom_point()
+
+# Some mismatches and many NA's
+
+# Make a new Rect column based on the coordinates...
+df_full$Ices.rect <- ices.rect2(lon = df_full$Lon, lat = df_full$Lat)
+
+# Do I have rectangle information for any rows that I don't have coords for? If so,
+# I need to use to information because the above columns would give an NA there
+df_full %>%
+  mutate(test = coalesce(Lat, -9)) %>% 
+  filter(test == -9) %>% 
+  distinct(Ices.rect, Square, Rect)
+
+# Ok, so it seems that the column "Square" contains Rect info even if there are no coordinates
+# Check it's correct by filtering rows that have NA coordinates
+unique(df_full$Square)
+df_full %>%
+  mutate(Lat2 = coalesce(Lat, -9)) %>% # Replace NA with -9
+  filter(Lat2 == -9 & Ices.rect == "NANANA") %>% # Filter rows that are both NA in coordinates and thus Ices.rect
+  filter(!Square == "") # ... And non-missing square information
+
+# Ok, so if IcesRec == NA, use the Square column. Else IcesRec. Then discard the rest..
+df_full <- df_full %>%
+  mutate(Ices.rect = ifelse(Ices.rect == "NANANA", Square, Ices.rect))
+
+# Check to make sure it's correct. Plot and color by rectangle
+df_full %>%
+  ggplot(., aes(x = Long, y = Lat, color = Ices.rect)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = xlim, ylim = ylim) + 
+  NULL
+
+# Ok, no remove the other columns indicating Ices Rectangle (Square and Rect)
+df_full <- df_full %>% dplyr::select(-Square, -Rect)
+
+# NA sub-divs?
+unique(df_full$SD)
+
+df_full %>% 
+  ggplot(., aes(SD, Lat, fill = Cruise)) +
+  geom_bar(stat = "identity")
+
+# Alright, the sub-divisions are aggregated here... I will use the ICES sub
+# I don't know about a neat function like the ices_rect, so I will do it manually here...
+df_full <- df_full %>% 
+  mutate(SubDiv = NA) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G0", "37G1",
+                                         "38G0", "38G1", 
+                                         "39F9", "39G0", "39G1",
+                                         "40F9", "40G0", "40G1"), "22", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect == "40G2", "23", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G2", "37G3", "37G4",
+                                         "38G1", "38G2", "38G3", "38G4", 
+                                         "39G1", "39G2", "39G3", "39G4",
+                                         "40G1"), "24", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("40G4",
+                                         "37G5", "37G6", "37G7",
+                                         "38G5", "38G6", "38G7",
+                                         "39G5", "39G6", "39G7",
+                                         "40G5", "40G6", "40G7",
+                                         "41G5", "41G6", "41G7"), "25", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G8", "37G9", "37H0",
+                                         "38G8", "38G9", "38H0",
+                                         "39G8", "39G9", "39H0",
+                                         "40G8", "40G9", "40H0",
+                                         "41G8", "41G9", "41H0"), "26", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("42G6", "42G7",
+                                         "43G6", "43G7",
+                                         "44G6", "44G7", "44G8"), "27", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("42G8", "42G9", "42H0", "42H1", "42H2",
+                                         "43G8", "43G9", "43H0", "43H1", "43H2",
+                                         "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 58.5 & Long > 19, "29", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 57 & Lat < 58.5 & Long > 19 & Long < 22, "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 57 & Lat < 60 & Long > 16 & Long < 18, "27", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 55.5 & Lat < 56.5 & Long > 14 & Long < 16, "25", SubDiv)) %>% 
+  mutate(SubDiv = factor(SubDiv))
+
+# Check to make sure it's correct. Plot and color by SubDiv
+df_full %>%
+  ggplot(., aes(x = Long, y = Lat, color = SubDiv)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = xlim, ylim = ylim) + 
+  NULL
+
+# Same but for recent years
+df_full %>%
+  filter(Year > 2014) %>% 
+  ggplot(., aes(x = Long, y = Lat, color = SubDiv)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = xlim, ylim = ylim) + 
+  theme_classic(base_size = 20) +
+  NULL
+
+# Ok, this looks correct! Now we can remove the SD column
+df_full <- df_full %>% dplyr::select(-SD)
+
+# Check now the length-columns
+sort(colnames(df_full))
+
+# I will remove this column because the user can make his or her own length classes
+ggplot(df_full, aes(Length.class)) + geom_histogram(stat = "count")
+
+df_full <- df_full %>% dplyr::select(-Length.class)
+
+# These are not standard length code from ICES. Will not do anything about that for now
+ggplot(df_full, aes(Length.code)) + geom_histogram(stat = "count")
+
+ggplot(df_full, aes(length)) + geom_histogram()
+ggplot(df_full, aes(Pred.size)) + geom_histogram()
+
+# They look similar, how correlated are they? 
+ggplot(df_full, aes(length, Pred.size)) +
+  geom_point() + 
+  geom_abline(intercept = 0, slope = 10, color = "red")
+
+# Very good! One is in cm and the other in mm though
+
+# Are there any rows where one or the other is NA? Can I merge them into a single column?
+test <- df_full %>% 
+  mutate(length = coalesce(length, -9)) %>% # Replace NA with -9
+  mutate(Pred.size = coalesce(Pred.size, -9)) # Replace NA with -9
+
+# 92 % of rows have no length but a true Pred.size value
+test %>% filter(length == -9 & Pred.size > 0)
+
+# There are no rows where there is an NA Pred.size and a real length though.
+test %>% filter(Pred.size == -9 & length > 0)
+
+# Remove the length column therefore
+df_full <- df_full %>% dplyr::select(-length)
+
+# What CRUISES can we add now to the data?
+df_full %>%
+  mutate(cruise_year_quarter_pred_id = paste(Year, Quarter, Cruise, Predator.code, sep = "_")) %>%
+  distinct(cruise_year_quarter_pred_id) %>% 
+  arrange(desc(cruise_year_quarter_pred_id))
+```
+
+According to the data overview, we can now add other data:
+   - 2017_4_BITS_FLE - Exists as a tab in separate flounder data
+   - 2018_4_BITS_FLE - Does not exist
+   - 2018_4_BITS_COD - Can add now
+   - 2018_4_BIAS_COD - Can add now
+   - 2018_1_BITS_FLE - Can add now
+   - 2018_1_BITS_COD - Can add now
+
+To be analyzed during fall 2020:
+   - 2019 (COD_Q4_BITS, FLE_Q4_BITS, COD_BIAS)
+   - 2020 (COD_Q1_BITS, FLE_Q1_BITS)
+
+## 2. Add new data - BITS
+```{r new bits, message=FALSE, results="hide"}
+bits_2017_q4_fle <- read.csv("data/stomach_data/2017/02.01.2019_database_COD_FLE.csv", sep = ";")
+bits_2018_q4_cod <- read.csv("data/stomach_data/2018/BITS Q4 2018_COD.csv", sep = ";")
+bits_2018_q1_fle <- read.csv("data/stomach_data/2018/BITS Q1 2018_FLE.csv", sep = ";")
+bits_2018_q1_cod <- read.csv("data/stomach_data/2018/BITS Q1 2018_COD.csv", sep = ";")
+
+str(bits_2017_q4_fle)
+str(bits_2018_q4_cod)
+str(bits_2018_q1_fle)
+str(bits_2018_q1_cod)
+
+# Bind them together, then see what columns are missing from the base data
+data.frame(bits_2018_q1_cod = colnames(bits_2018_q1_cod)[1:32],
+           bits_2018_q1_fle = colnames(bits_2018_q1_fle)[1:32],
+           bits_2018_q4_cod = colnames(bits_2018_q4_cod)[1:32],
+           bits_2017_q4_fle = colnames(bits_2017_q4_fle)[1:32])
+
+# Looks like we can rbind them
+temp_new <- rbind(bits_2018_q1_cod[1:32],
+                  bits_2018_q1_fle[1:32],
+                  bits_2018_q4_cod[1:32],
+                  bits_2017_q4_fle[1:32])
+
+# Compare the column names from the df_full we merged above:
+sort(colnames(temp_new))
+sort(colnames(df_full))
+
+
+
+# Now check which columns are not in the full data but are in the new data
+colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+# [1] "square"               "SD"                   "month"                "comment"              "parasites.in.stomach"
+# [6] "cruise"               "Size.group.code"      "Gall.bladder"         "stomach.state"
+
+# These are in fact in the full data, but under different names
+sort(colnames(df_full))
+
+# Clean up the column names in temp_new
+temp_new <- temp_new %>% rename("SubDiv" = "SD",
+                                "Square" = "square",
+                                "Month" = "month",
+                                "Comment" = "comment",
+                                "Parasites.in.stomach" = "parasites.in.stomach",
+                                "Cruise" = "cruise",
+                                "Gall.content" = "Gall.bladder")
+
+unique(temp_new$SubDiv)
+
+# Still unique columns in the new data? Yes. Remove them as I can't find their equivalent cols
+diff_cols <- colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+diff_cols
+
+# We will deal with the square (Ices.rect now) once we get the coordinates...
+
+temp_new <- temp_new %>% dplyr::select(!diff_cols)
+
+# Now all the columns are there
+colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+
+# That means, all the columns that are NOT in the temp_new but are in df_full must come
+# either from the biological data or from the trawl data.
+# First find which they are:
+missing_cols <- sort(colnames(df_full)[!(colnames(df_full) %in% colnames(temp_new))])
+missing_cols
+
+# > missing_cols
+#  [1] "Age"                    "comments"               "Date"                   "Depth.catch"            "Depthstep"             
+#  [6] "Gonad.weight.roundfish" "Ices.rect"               "Index"                  "Lat"                    "Liver.weight.roundfish"
+# [11] "Long"                   "Number"                 "Perc.stomac.content"    "Processed"              "Q_Year"                
+# [16] "Sample.type"            "Stomach.content"        "transect"              
+
+# Now read the bottom trawl data and the biological data from the trawls
+# Read in trawl data. There's one file for cod and one for flounder
+# They go up to 2020 Q1
+trawl_surveys_1_I <- read.csv("data/stomach_data/trawl_data/trawl_surveys_zincl_(l) (3).csv", sep = ";")
+trawl_surveys_2_I <- read.csv("data/stomach_data/trawl_data/trawl_surveys_zincl_(l) (4).csv", sep = ";")
+
+# Combine for the two species
+bits_trawl_data <- rbind(trawl_surveys_1_I, trawl_surveys_2_I)
+
+# Read in biological data from trawl data. There's one file for cod and one for flounder
+trawl_surveys_s_cod <- read.csv("data/stomach_data/trawl_data/trawl_surveys_(s) (7).csv", sep = ";") # Cod
+trawl_surveys_s_flounder <- read.csv("data/stomach_data/trawl_data/trawl_surveys_(s) (8).csv", sep = ";") # Flounder
+
+trawl_surveys_s_cod$Species <- "Cod"
+trawl_surveys_s_flounder$Species <- "Flounder"
+
+# Combine for the two species
+bits_bio_data <- rbind(trawl_surveys_s_cod, trawl_surveys_s_flounder)
+
+# Filter only the years and quarters we have in temp_new
+# First make a new Q_Year column
+bits_trawl_data <- bits_trawl_data %>% mutate(Q_Year = paste(Quarter, Year, sep = "_"))
+bits_bio_data <- bits_bio_data %>% mutate(Q_Year = paste(Quarter, Year, sep = "_"))
+
+temp_new <- temp_new %>% mutate(Q_Year = paste(Quarter, Year, sep = "_"))
+
+# Now filter the trawl and biological data
+bits_trawl_data <- bits_trawl_data %>% filter(Q_Year %in% unique(temp_new$Q_Year))
+bits_bio_data <- bits_bio_data %>% filter(Q_Year %in% unique(temp_new$Q_Year))
+
+# Join the trawl, bio and stomach data. First create a unique ID. Sample is otolith number (fish ID!)
+# First need to standardize some columns... 
+bits_bio_data <- bits_bio_data %>% rename("Sample" = "Otolith.no") # There are three "Otolith.no" that are the same in two different fish id
+
+# Make sample numeric in the temp_new data
+temp_new$Sample <- as.numeric(temp_new$Sample)
+
+# Add a new species code in the trawl data that matches the stomach data 
+bits_bio_data <- bits_bio_data %>% mutate(Predator.code = ifelse(Species == "Cod", "COD", "FLE"))
+
+# Change haulnumber to HN
+bits_bio_data <- bits_bio_data %>% rename("HN" = "Haul")
+
+# Now add the ID
+bits_bio_data$bio_ID <- paste(bits_bio_data$Year,
+                              bits_bio_data$Quarter,
+                              bits_bio_data$HN,
+                              bits_bio_data$Sample,
+                              bits_bio_data$Predator.code,
+                              sep = "_")
+
+# Check IDS
+bits_bio_data %>% 
+  group_by(bio_ID) %>% 
+  mutate(n = n()) %>% 
+  ungroup() %>% 
+  distinct(n)
+
+# There are rows with more than one row per individual (id). Inspect that data:
+bits_bio_data %>% 
+  group_by(bio_ID) %>% 
+  mutate(n = n()) %>% 
+  filter(n > 1) %>% 
+  as.data.frame()
+
+# Likely a typo. Will remove for now (though they have different fish id's!)
+bits_bio_data <- bits_bio_data %>% 
+  group_by(bio_ID) %>% 
+  mutate(n = n()) %>% 
+  filter(n == 1) %>% 
+  dplyr::select(-n) %>% 
+  ungroup()
+
+# Create the same ID in the new data
+temp_new$bio_ID <- paste(temp_new$Year, 
+                         temp_new$Quarter, 
+                         temp_new$HN, 
+                         temp_new$Sample,
+                         temp_new$Predator.code,
+                         sep = "_")
+
+# Check IDS
+temp_new %>% 
+  group_by(bio_ID) %>% 
+  mutate(n = n()) %>% 
+  ggplot(., aes(n)) + geom_histogram()
+
+# Are there any ID's that are in the stomach data that are not in the bio data?
+missing_ids_in_bio <- temp_new$bio_ID[!temp_new$bio_ID %in% bits_bio_data$bio_ID]
+
+sort(unique(missing_ids_in_bio))
+
+# They are missing because some variables is NA or likely because the haul doesn't exist in the trawl data
+# See how much data is gone when I remove them. 
+temp_new %>% filter(!bio_ID %in% missing_ids_in_bio)
+
+# Only 55 rows without bio info. Perhaps not that much!
+
+# In order to not add in data from the biological data for which we don't have stomach data,
+# subset the id's in the bio data that are in the stomach data and also remove columns that are the same in both data sets
+dup_cols <- colnames(bits_bio_data)[colnames(bits_bio_data) %in% colnames(temp_new)]
+dup_cols <- dup_cols[!dup_cols %in% "bio_ID"] # Must keep the ID though, so remove that from the list of duplicates
+
+# Filter the stomach ID's in the bio data and remove duplicated columns
+bits_bio_data_sub <- bits_bio_data %>%
+  filter(bio_ID %in% unique(temp_new$bio_ID)) %>% 
+  dplyr::select(-dup_cols)
+
+# Now do a left_join to get bio data into the temp_new data
+temp_new <- left_join(temp_new, bits_bio_data_sub, by = "bio_ID")
+
+# Again, 55 rows without any match in the trawl data
+
+# OK, now do the trawl data. First find a unique ID
+# Add a new species code in the trawl data that matches the stomach data 
+bits_trawl_data <- bits_trawl_data %>% mutate(Predator.code = ifelse(Species == "Cod", "COD", "FLE"))
+
+# Change haulnumber to HN
+bits_trawl_data <- bits_trawl_data %>% rename("HN" = "Haul")
+
+bits_trawl_data$trawl_ID <- paste(bits_trawl_data$Year,
+                                  bits_trawl_data$Quarter,
+                                  bits_trawl_data$HN,
+                                  bits_trawl_data$Predator.code,
+                                  sep = "_")
+
+# Check IDS
+bits_trawl_data %>% 
+  group_by(trawl_ID, Lengthcl.) %>% 
+  mutate(n = n()) %>% 
+  ungroup() %>%
+  distinct(n) # The reason I have >1 n is because it's by size class. I do not need that information here so I will remove all the repeated trawl IDs so that I get 1 id per haul
+
+# Don't forget to drop the length class column so that I don't think I need it later because it's no longer meaning length of that individual!
+bits_trawl_data_distinct <- bits_trawl_data %>% distinct(trawl_ID, .keep_all = TRUE) %>% dplyr::select(-Lengthcl.)
+
+# Now add in the same ID in the stomach data
+temp_new$trawl_ID <- paste(temp_new$Year, 
+                           temp_new$Quarter, 
+                           temp_new$HN, 
+                           temp_new$Predator.code,
+                           sep = "_")
+
+sort(unique(temp_new$trawl_ID))
+
+# Again, some NA haul info
+
+# Check how many unique id's I have and how many I have in the trawl data
+length(unique(temp_new$trawl_ID))
+nrow(bits_trawl_data_distinct)
+
+# More trawl ids than stomach ids, makes sense
+
+# Are there any ID's that are in the stomach data that are not in the trawl data?
+missing_ids_in_trawl <- temp_new$trawl_ID[!temp_new$trawl_ID %in% bits_trawl_data_distinct$trawl_ID]
+
+sort(unique(missing_ids_in_trawl))
+
+# Same as above, some ids could not be calculate in the stomach data and hence no match found in the trawl data
+
+# In order to not add in data from the trawl data for which we don't have stomach data,
+# subset the id's in the trawl data that are in the stomach data and also remove columns that are the same in both data sets
+dup_cols <- colnames(bits_trawl_data_distinct)[colnames(bits_trawl_data_distinct) %in% colnames(temp_new)]
+dup_cols <- dup_cols[!dup_cols %in% "trawl_ID"] # Must keep the ID
+
+# Filter the stomach ID's in the trawl data and remove duplicated columns
+bits_trawl_data_distinct_sub <- bits_trawl_data_distinct %>%
+  filter(trawl_ID %in% unique(temp_new$trawl_ID)) %>% 
+  dplyr::select(-dup_cols) 
+
+# Now do a left_join to get trawl data into the temp_new data
+temp_new <- left_join(temp_new, bits_trawl_data_distinct_sub, by = "trawl_ID")
+
+# 47 rows here without trawl information. Keep for now
+```
+
+Now that we have linked stomach, haul and biological info in the new data, clean it up a little bit before merging with the older data
+
+```{r clean new BITS data, message=FALSE}
+# Fix longitude and latitude:
+temp_new$Lat <- as.numeric(gsub(",", "\\.", temp_new$Lat))
+temp_new$Long <- as.numeric(gsub(",", "\\.", temp_new$Long))
+
+temp_new$Lat <- format.position(temp_new$Lat)
+temp_new$Long <- format.position(temp_new$Long)
+
+# Some data with NA coords (47 to be precise, i.e. the ones we couldn't match with a trawl id)
+temp_new %>% filter(is.na(Lat) == TRUE) %>% as.data.frame()
+
+# Fix the length column
+sort(colnames(df_full))
+unique(df_full$Length.code)
+unique(temp_new$Length.code)
+
+ggplot(temp_new, aes(Lengthcl, Pred.size)) +
+  geom_point() + 
+  geom_abline(color = "red")
+
+# Are there any rows where one or the other is NA? Can I merge them into a single column?
+test <- temp_new %>% 
+  mutate(Lengthcl = coalesce(Lengthcl, -9)) %>% # Replace NA with -9
+  mutate(Pred.size = coalesce(Pred.size, -9)) # Replace NA with -9
+
+# 0 % of rows have no Lengthcl but a true Pred.size value
+test %>% filter(Lengthcl == -9 & Pred.size > 0)
+
+# 24% of rows have no Pred.size but a real length though
+test %>% filter(Pred.size == -9 & Lengthcl > 0)
+
+# Make the Lengthcl the Pred.size column and remove the Lengthcl
+temp_new <- temp_new %>%
+  mutate(Pred.size = Lengthcl) %>% 
+  dplyr::select(-Lengthcl)
+
+temp_new %>% filter(is.na(Pred.size) == TRUE)
+
+# Only 55 rows with that information (likely related to the 55 rows without any biological data above...)
+
+# OK, which columns do I have now? First remove the temporary trawl and bio id columns
+temp_new <- temp_new %>% dplyr::select(-c(trawl_ID, bio_ID))
+sort(colnames(temp_new))
+
+# Which cols are in the new data but not in df_full? Will remove them unless they are spelled incorrectly
+cols_to_remove_from_new <- colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+
+sort(cols_to_remove_from_new)
+sort(colnames(df_full))
+
+# Rename some columns to match the old data.
+temp_new <- temp_new %>%
+  rename("Depth.catch" = "Bottom.depth")
+
+# Check again which cols are not in the new data but not in df_full?
+cols_to_remove_from_new <- colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+
+# OK, so if I remove these columns from the new data, do I have matching columns
+# (else cols may be the same but with different names)
+temp_new_sub <- temp_new %>% dplyr::select(-cols_to_remove_from_new)
+
+# Which columns are in the new but not old?
+colnames(temp_new_sub)[!colnames(temp_new_sub) %in% colnames(df_full)]
+
+# Which columns are in the old but not new?
+sort(colnames(df_full)[!colnames(df_full) %in% colnames(temp_new_sub)])
+
+# They are not in the the full new data
+sort(colnames(temp_new))
+# ... so therefore not in the subset. Will make them NA then by doing a bind_rows
+
+# Now fix ICES rectangles
+temp_new_sub$Ices.rect <- ices.rect2(lon = temp_new_sub$Lon, lat = temp_new_sub$Lat)
+
+# And lastly sub-division
+# Alright, the sub-divisions are aggregated here... I will use the ICES sub
+# I don't know about a neat function like the ices_rect, so I will do it manually here...
+temp_new_sub <- temp_new_sub %>% 
+  mutate(SubDiv = NA) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G0", "37G1",
+                                         "38G0", "38G1", 
+                                         "39F9", "39G0", "39G1",
+                                         "40F9", "40G0", "40G1"), "22", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect == "40G2", "23", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G2", "37G3", "37G4",
+                                         "38G1", "38G2", "38G3", "38G4", 
+                                         "39G1", "39G2", "39G3", "39G4",
+                                         "40G1"), "24", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("40G4",
+                                         "37G5", "37G6", "37G7",
+                                         "38G5", "38G6", "38G7",
+                                         "39G5", "39G6", "39G7",
+                                         "40G5", "40G6", "40G7",
+                                         "41G5", "41G6", "41G7"), "25", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G8", "37G9", "37H0",
+                                         "38G8", "38G9", "38H0",
+                                         "39G8", "39G9", "39H0",
+                                         "40G8", "40G9", "40H0",
+                                         "41G8", "41G9", "41H0"), "26", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("42G6", "42G7",
+                                         "43G6", "43G7",
+                                         "44G6", "44G7", "44G8"), "27", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("42G8", "42G9", "42H0", "42H1", "42H2",
+                                         "43G8", "43G9", "43H0", "43H1", "43H2",
+                                         "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 58.5 & Long > 19, "29", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 57 & Lat < 58.5 & Long > 19 & Long < 22, "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 57 & Lat < 60 & Long > 16 & Long < 19, "27", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 55.5 & Lat < 56.5 & Long > 14 & Long < 16, "25", SubDiv)) %>% 
+  mutate(SubDiv = factor(SubDiv))
+
+# Check to make sure it's correct. Plot and color by SubDiv
+temp_new_sub %>%
+  ggplot(., aes(x = Long, y = Lat, color = SubDiv)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = xlim, ylim = ylim) + 
+  NULL
+
+# All the data with coordinates now have sub div and rectangle, since they aren't to be seen in this plot
+
+# Before joining, make sure some columns are of the same type!  
+temp_new_sub$Sample <- as.character(temp_new_sub$Sample)
+temp_new_sub$Prey.nr <- as.character(temp_new_sub$Prey.nr)
+temp_new_sub$HN <- as.integer(temp_new_sub$HN)
+
+# Add a source for proof checking later!
+temp_new_sub$source <- "Max Postdoc"
+
+full_dat <- bind_rows(temp_new_sub, df_full)
+
+colnames(full_dat)
+```
+
+Now we can add the BIAS data in the same way:
+
+## 3. Add new data - BIAS
+```{r new bias, message=FALSE, results="hide"}
+bias_2018_q4_cod <- read.csv("data/stomach_data/2018/BIAS_2018_COD.csv", sep = ";")
+
+str(bias_2018_q4_cod)
+
+temp_new <- bias_2018_q4_cod %>% rename("SubDiv" = "SD",
+                                        "Square" = "square",
+                                        "Month" = "month",
+                                        "Comment" = "comment",
+                                        "Parasites.in.stomach" = "parasites.in.stomach",
+                                        "Cruise" = "cruise",
+                                        "Gall.content" = "Gall.bladder")
+
+# Still unique columns in the new data? Yes. Remove them as I can't find their equivalent cols
+diff_cols <- colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+diff_cols
+
+# We will deal with the square (Ices.rect now) once we get the coordinates...
+temp_new <- temp_new %>% dplyr::select(!diff_cols)
+
+# Now all the columns are there
+colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+
+# That means, all the columns that are NOT in the temp_new but are in df_full must come
+# either from the biological data or from the trawl data.
+# First find which they are:
+missing_cols <- sort(colnames(df_full)[!(colnames(df_full) %in% colnames(temp_new))])
+missing_cols
+
+# Now read the BIAS trawl data and the biological data from the trawls
+# (s) = individ, (l) = haul
+bias_trawl_data <- read.csv("data/stomach_data/trawl_data/BIAS/trawl_surveys_zincl_(l) (15).csv", sep = ";")
+bias_bio_data <- read.csv("data/stomach_data/trawl_data/BIAS/trawl_surveys_(s) (20).csv", sep = ";")
+
+# Filter only the years and quarters we have in temp_new
+# First make a new Q_Year column
+temp_new <- temp_new %>% mutate(Q_Year = paste(Quarter, Year, sep = "_"))
+bias_trawl_data <- bias_trawl_data %>% mutate(Q_Year = paste(Quarter, Year, sep = "_"))
+bias_bio_data <- bias_bio_data %>% mutate(Q_Year = paste(Quarter, Year, sep = "_"))
+
+# Now filter the trawl and biological data to match the time in the stomach data
+bias_trawl_data <- bias_trawl_data %>% filter(Q_Year %in% unique(temp_new$Q_Year))
+bias_bio_data <- bias_bio_data %>% filter(Q_Year %in% unique(temp_new$Q_Year))
+
+# Join the trawl, bio and stomach data. First create a unique ID. Sample is otolith number (fish ID!)
+# First need to standardize some columns... 
+bias_bio_data <- bias_bio_data %>% rename("Sample" = "Otolith.no") # There are three "Otolith.no" that are the same in two different fish id
+
+# Make sample numeric in the temp_new data
+temp_new$Sample <- as.numeric(temp_new$Sample)
+
+# Add a new species code in the trawl data that matches the stomach data 
+bias_bio_data <- bias_bio_data %>% mutate(Predator.code = ifelse(Species == "Cod", "COD", "FLE"))
+
+# Change haulnumber to HN
+bias_bio_data <- bias_bio_data %>% rename("HN" = "Haul")
+
+# Now add the ID
+bias_bio_data$bio_ID <- paste(bias_bio_data$Year,
+                              bias_bio_data$Quarter,
+                              bias_bio_data$HN,
+                              bias_bio_data$Sample,
+                              bias_bio_data$Predator.code,
+                              sep = "_")
+
+# Check IDS
+bias_bio_data %>% 
+  group_by(bio_ID) %>% 
+  mutate(n = n()) %>% 
+  ungroup() %>% 
+  distinct(n)
+
+# Create the same ID in the new data
+temp_new$bio_ID <- paste(temp_new$Year, 
+                         temp_new$Quarter, 
+                         temp_new$HN, 
+                         temp_new$Sample,
+                         temp_new$Predator.code,
+                         sep = "_")
+
+# Check IDS
+temp_new %>% 
+  group_by(bio_ID) %>% 
+  mutate(n = n()) %>% 
+  ggplot(., aes(n)) + geom_histogram()
+
+# Are there any ID's that are in the stomach data that are not in the bio data?
+missing_ids_in_bio <- temp_new$bio_ID[!temp_new$bio_ID %in% bias_bio_data$bio_ID]
+
+sort(unique(missing_ids_in_bio))
+
+# They are missing because some variables is NA or likely because the haul doesn't exist in the trawl data
+# See how much data is gone when I remove them. 
+temp_new %>% filter(!bio_ID %in% missing_ids_in_bio)
+
+# 10 % of stomachs... hmmm maybe too much? All but two don't have a haul number...
+
+# In order to not add in data from the biological data for which we don't have stomach data,
+# subset the id's in the bio data that are in the stomach data and also remove columns that are the same in both data sets
+dup_cols <- colnames(bias_bio_data)[colnames(bias_bio_data) %in% colnames(temp_new)]
+dup_cols <- dup_cols[!dup_cols %in% "bio_ID"] # Must keep the ID though, so remove that from the list of duplicates
+
+# Filter the stomach ID's in the bio data and remove duplicated columns
+bias_bio_data_sub <- bias_bio_data %>%
+  filter(bio_ID %in% unique(temp_new$bio_ID)) %>% 
+  dplyr::select(-dup_cols)
+
+# Now do a left_join to get bio data into the temp_new data
+temp_new <- left_join(temp_new, bias_bio_data_sub, by = "bio_ID")
+
+# 14 rows that are only in X (stomach data)
+
+# OK, now do the trawl data. First find a unique ID
+# Add a new species code in the trawl data that matches the stomach data 
+bias_trawl_data <- bias_trawl_data %>% mutate(Predator.code = ifelse(Species == "Cod", "COD", "FLE"))
+
+# Change haulnumber to HN
+bias_trawl_data <- bias_trawl_data %>% rename("HN" = "Haul")
+
+bias_trawl_data$trawl_ID <- paste(bias_trawl_data$Year,
+                                  bias_trawl_data$Quarter,
+                                  bias_trawl_data$HN,
+                                  bias_trawl_data$Predator.code,
+                                  sep = "_")
+
+# Check IDS
+bias_trawl_data %>% 
+  group_by(trawl_ID, Lengthcl.) %>%
+#  group_by(trawl_ID) %>% 
+  mutate(n = n()) %>% 
+  ungroup() %>%
+  distinct(n) # The reason I have >1 n is because it's by size class. I do not need that information here so I will remove all the repeated trawl IDs so that I get 1 id per haul. 
+
+unique(bias_trawl_data$Lat)
+
+# Don't forget to drop the length class column so that I don't think I need it later because it's no longer meaning length of that individual!
+bias_trawl_data_distinct <- bias_trawl_data %>% distinct(trawl_ID, .keep_all = TRUE) %>% dplyr::select(-Lengthcl.)
+
+unique(bias_trawl_data_distinct$Lat)
+
+# Now add in the same ID in the stomach data
+temp_new$trawl_ID <- paste(temp_new$Year, 
+                           temp_new$Quarter, 
+                           temp_new$HN, 
+                           temp_new$Predator.code,
+                           sep = "_")
+
+sort(unique(temp_new$trawl_ID))
+
+# Again, some NA haul info
+
+# Check how many unique id's I have and how many I have in the trawl data
+length(unique(temp_new$trawl_ID))
+nrow(bias_trawl_data_distinct)
+
+# More trawl ids than stomach ids, makes sense
+
+# Are there any ID's that are in the stomach data that are not in the trawl data?
+missing_ids_in_trawl <- temp_new$trawl_ID[!temp_new$trawl_ID %in% bias_trawl_data_distinct$trawl_ID]
+
+sort(unique(missing_ids_in_trawl))
+
+# Same as above, some ids could not be calculate in the stomach data and hence no match found in the trawl data
+
+# In order to not add in data from the trawl data for which we don't have stomach data,
+# subset the id's in the trawl data that are in the stomach data and also remove columns that are the same in both data sets
+dup_cols <- colnames(bias_trawl_data_distinct)[colnames(bias_trawl_data_distinct) %in% colnames(temp_new)]
+dup_cols <- dup_cols[!dup_cols %in% "trawl_ID"] # Must keep the ID
+
+# Filter the stomach ID's in the trawl data and remove duplicated columns
+bias_trawl_data_distinct_sub <- bias_trawl_data_distinct %>%
+  filter(trawl_ID %in% unique(temp_new$trawl_ID)) %>% 
+  dplyr::select(-dup_cols) 
+
+# Now do a left_join to get trawl data into the temp_new data
+temp_new <- left_join(temp_new, bias_trawl_data_distinct_sub, by = "trawl_ID")
+
+```
+
+Now that we have linked stomach, haul and biological info in the new data, clean it up a little bit before merging with the older data
+
+```{r clean new BIAS data, message=FALSE}
+# Fix longitude and latitude:
+temp_new$Lat <- as.numeric(gsub(",", "\\.", temp_new$Lat))
+temp_new$Long <- as.numeric(gsub(",", "\\.", temp_new$Long))
+
+temp_new$Lat <- format.position(temp_new$Lat)
+temp_new$Long <- format.position(temp_new$Long)
+
+# Some data with NA coords
+temp_new %>% filter(is.na(Lat) == TRUE) %>% as.data.frame()
+
+# Fix the length column
+sort(colnames(df_full))
+unique(df_full$Length.code)
+unique(temp_new$Length.code)
+
+ggplot(temp_new, aes(Pred.size, Lengthcl)) +
+  geom_point() + 
+  geom_abline(intercept = 0, slope = 10, color = "red")
+
+# Need to make pred size a numeric first... 
+str(temp_new)
+temp_new$Pred.size <- as.numeric(temp_new$Pred.size)
+
+# Are there any rows where one or the other is NA? Can I merge them into a single column?
+temp_new %>% 
+  dplyr::select(Lengthcl, Pred.size, Length.code, Length.measure.type)
+
+# No - make the Lengthcl the Pred.size column and remove the Lengthcl
+temp_new <- temp_new %>%
+  mutate(Pred.size = Lengthcl) %>% 
+  dplyr::select(-Lengthcl)
+
+temp_new %>% filter(is.na(Pred.size) == TRUE)
+
+# Only 14 rows with that information (likely related to the 55 rows without any biological data above...)
+
+# OK, which columns do I have now? First remove the temporary trawl and bio id columns
+temp_new <- temp_new %>% dplyr::select(-c(trawl_ID, bio_ID))
+sort(colnames(temp_new))
+
+# Which cols are in the new data but not in df_full? Will remove them unless they are spelled incorrectly
+cols_to_remove_from_new <- colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+
+sort(cols_to_remove_from_new)
+sort(colnames(df_full))
+
+# Rename some columns to match the old data.
+temp_new <- temp_new %>%
+  rename("Depth.catch" = "Bottom.depth")
+
+# Check again which cols are not in the new data but not in df_full?
+cols_to_remove_from_new <- colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
+
+# OK, so if I remove these columns from the new data, do I have matching columns
+# (else cols may be the same but with different names)
+temp_new_sub <- temp_new %>% dplyr::select(-cols_to_remove_from_new)
+
+# Which columns are in the new but not old?
+colnames(temp_new_sub)[!colnames(temp_new_sub) %in% colnames(df_full)]
+
+# Which columns are in the old but not new?
+sort(colnames(df_full)[!colnames(df_full) %in% colnames(temp_new_sub)])
+
+# They are not in the the full new data
+sort(colnames(temp_new))
+# ... so therefore not in the subset. Will make them NA then by doing a bind_rows
+
+# Now fix ICES rectangles
+temp_new_sub$Ices.rect <- ices.rect2(lon = temp_new_sub$Lon, lat = temp_new_sub$Lat)
+
+# And lastly sub-division
+# Alright, the sub-divisions are aggregated here... I will use the ICES sub
+# I don't know about a neat function like the ices_rect, so I will do it manually here...
+temp_new_sub <- temp_new_sub %>% 
+  mutate(SubDiv = NA) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G0", "37G1",
+                                         "38G0", "38G1", 
+                                         "39F9", "39G0", "39G1",
+                                         "40F9", "40G0", "40G1"), "22", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect == "40G2", "23", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G2", "37G3", "37G4",
+                                         "38G1", "38G2", "38G3", "38G4", 
+                                         "39G1", "39G2", "39G3", "39G4",
+                                         "40G1"), "24", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("40G4",
+                                         "37G5", "37G6", "37G7",
+                                         "38G5", "38G6", "38G7",
+                                         "39G5", "39G6", "39G7",
+                                         "40G5", "40G6", "40G7",
+                                         "41G5", "41G6", "41G7"), "25", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("37G8", "37G9", "37H0",
+                                         "38G8", "38G9", "38H0",
+                                         "39G8", "39G9", "39H0",
+                                         "40G8", "40G9", "40H0",
+                                         "41G8", "41G9", "41H0"), "26", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("42G6", "42G7",
+                                         "43G6", "43G7",
+                                         "44G6", "44G7", "44G8"), "27", SubDiv)) %>% 
+  mutate(SubDiv = ifelse(Ices.rect %in% c("42G8", "42G9", "42H0", "42H1", "42H2",
+                                         "43G8", "43G9", "43H0", "43H1", "43H2",
+                                         "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 58.5 & Long > 19, "29", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 57 & Lat < 58.5 & Long > 19 & Long < 22, "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 57 & Lat < 60 & Long > 16 & Long < 19, "27", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Lat > 55.5 & Lat < 56.5 & Long > 14 & Long < 16, "25", SubDiv)) %>% 
+  mutate(SubDiv = factor(SubDiv))
+
+# Check to make sure it's correct. Plot and color by SubDiv
+temp_new_sub %>%
+  ggplot(., aes(x = Long, y = Lat, color = SubDiv)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = xlim, ylim = ylim) + 
+  NULL
+
+# All the data with coordinates now have sub div and rectangle, since they aren't to be seen in this plot
+
+# Before joining, make sure some columns are of the same type!  
+temp_new_sub$Sample <- as.character(temp_new_sub$Sample)
+temp_new_sub$Prey.nr <- as.character(temp_new_sub$Prey.nr)
+temp_new_sub$HN <- as.integer(temp_new_sub$HN)
+
+# Add a source for proof checking later!
+temp_new_sub$source <- "Max Postdoc"
+
+full_dat <- bind_rows(full_dat, temp_new_sub)
+```
+
+Now plot some data and look for strange things. Also change columns to the correct type etc.
+
+## 4. Clean some columns then save
+```{r prep data for save, message=FALSE}
+str(full_dat)
+
+# Change prey weight to numeric:
+full_dat$Prey.size <- as.numeric(full_dat$Prey.size)
+full_dat$Prey.weight <- as.numeric(gsub(",", "\\.", full_dat$Prey.weight))
+full_dat$Predator.gutted.weight <- as.numeric(gsub(",", "\\.", full_dat$Predator.gutted.weight))
+full_dat$Pred.size <- as.numeric(full_dat$Pred.size)
+full_dat$Pred.weight <- as.numeric(full_dat$Pred.weight)
+full_dat$Stomach.content <- as.numeric(full_dat$Stomach.content)
+
+str(full_dat)
+
+# Create a unique ID
+full_dat <- full_dat %>% mutate(Unique.pred.id = paste(Year, Quarter, HN, Sample, Predator.code, sep = "_"))
+
+# Rename some columns for clarity; Change form of Q_Year and add unit
+full_dat <- full_dat %>%
+  rename("Q.year" = "Q_Year",
+         "Pred.size.mm" = "Pred.size",
+         "Pred.weight.g" = "Pred.weight")
+
+# Check and plot how many rows per unique fish ID
+full_dat %>%
+  filter(Year > 1990) %>% 
+  group_by(Unique.pred.id) %>% 
+  mutate(n = n()) %>% 
+  ungroup() %>% 
+  arrange(desc(n)) %>% 
+  as.data.frame() %>% 
+  ggplot(., aes(n, fill = Cruise)) +
+  facet_grid(Cruise ~ Year, scales = "free") +
+  geom_histogram() +
+  theme(axis.text.x = element_text(angle = 90))
+  
+# Plot the unique cruises
+full_dat %>%
+  group_by(Year, Quarter, Cruise) %>% 
+  summarize(n = n()) %>% 
+  ungroup() %>% 
+  ggplot(., aes(factor(Year), n, fill = factor(Quarter))) + 
+  facet_wrap(~ Cruise, scales = "free") +
+  geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 90))
+
+# Plot size distribution by year
+# https://cran.r-project.org/web/packages/ggridges/vignettes/introduction.html
+full_dat %>% 
+  ggplot(., aes(x = Pred.size.mm, y = factor(Year), group = Year)) + 
+  geom_density_ridges(rel_min_height = 0.01, scale = 4, alpha = 0.4)
+
+# What is the proportion of measured size by year?
+full_dat %>% 
+  mutate(Pred.size.mm2 = coalesce(Pred.size.mm, -9)) %>%
+  mutate(size_Y_N = ifelse(Pred.size.mm2 == -9, "N", "Y")) %>%
+  group_by(size_Y_N, Year) %>% 
+  summarise(n = n()) %>% 
+  ggplot(., aes(Year, n, fill = size_Y_N)) + 
+  geom_bar(stat = "identity")
+
+# What is the proportion of measured ages by year?
+full_dat %>% 
+  mutate(Age2 = coalesce(Age, -9)) %>%
+  mutate(Age_Y_N = ifelse(Age2 == -9, "N", "Y")) %>%
+  group_by(Age_Y_N, Year) %>% 
+  summarise(n = n()) %>% 
+  ggplot(., aes(Year, n, fill = Age_Y_N)) + 
+  geom_bar(stat = "identity")
+
+# Plot spatial distribution of samples. Make color according to samples size
+# Check to make sure it's correct. Plot and color by rectangle
+full_dat %>%
+  filter(Year > 2014 & Quarter %in% c(1, 4)) %>%
+  filter(Predator.code == "COD") %>% 
+  group_by(Year, Quarter, HN) %>% 
+  mutate(n = n()) %>% 
+  ggplot(., aes(x = Long, y = Lat, color = n)) +
+  facet_grid(Quarter ~ Year) + 
+  geom_point(size = 0.4) +
+  scale_color_viridis() + 
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(14, 21), ylim = c(55, 59)) + 
+  ggtitle("COD n pred*prey item per haul") + 
+  theme_classic(base_size = 16) +
+  NULL
+
+# Flounder
+full_dat %>%
+  filter(Year > 2014 & Quarter %in% c(1, 4)) %>%
+  filter(Predator.code == "FLE") %>% 
+  group_by(Year, Quarter, HN) %>% 
+  mutate(n = n()) %>% 
+  ggplot(., aes(x = Long, y = Lat, color = n)) +
+  facet_grid(Quarter ~ Year) + 
+  geom_point(size = 0.4) +
+  scale_color_viridis() + 
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(14, 21), ylim = c(55, 59)) + 
+  ggtitle("FLE n pred*prey item per haul") + 
+  theme_classic(base_size = 16) +
+  NULL
+
+# How many unique predator lengths per sample (fish)?
+full_dat %>% 
+  mutate(test_id = paste(Year, Quarter, HN, Sample, Predator.code, sep = "_")) %>% 
+  group_by(test_id, Pred.size.mm) %>% # For each fish ID and pred_size, how many distinct sizes?
+  distinct(Pred.size.mm, .keep_all = TRUE) %>% 
+  mutate(n = n()) %>% 
+  arrange(desc(n)) %>% 
+  ggplot(., aes(n)) + geom_histogram()
+  
+# Plot length vs age
+full_dat %>% 
+  ggplot(., aes(Age, Pred.size.mm, color = factor(Cruise))) +
+  geom_jitter() +
+  facet_wrap(Predator.code~ Year)
+
+full_dat %>% 
+  filter(Year > 2013) %>% 
+  ggplot(., aes(Age, Pred.size.mm, color = factor(Predator.code))) +
+  geom_jitter() +
+  facet_wrap(Quarter ~ Year)
+
+# Plot length vs weight
+ggplot(full_dat, aes(Pred.weight.g, Pred.size.mm)) + geom_point()
+
+unique(full_dat$Cruise)
+unique(full_dat$Sample.type)
+unique(full_dat$comments)
+```
+
+Now create a new sub-area that matches the benthic data. This is semi-arbitrary, loosely based on the subdivision boundaries (see make_pred_grid)
+
+```{r add new sub-area, message=FALSE}
+# Now do a manual area, similar to sub divisions
+full_dat$sub_area <- "2"
+
+# Now modify them...
+full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat > 55.45 & Long < 14.2, "2", sub_area))
+full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat < 55.5 & Long > 14.3, "2", sub_area))
+full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat > 56.15, "3", sub_area))
+full_dat <- full_dat %>% mutate(sub_area = ifelse(Long > 17.55, "4", sub_area))
+full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat > 57.4 & Long < 17.7 & sub_area == 4, "3", sub_area))
+
+# This would be an offshore area that doesn't exist in the benthic data really
+full_dat <- full_dat %>% mutate(sub_area = ifelse(Long > 17.45 & Lat < 56.5, "5", sub_area))
+
+# Specify map ranges
+# ymin = 55; ymax = 58; xmin = 9.5; xmax = 20
+ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
+
+ggplot(full_dat, aes(x = Long, y = Lat, color = sub_area)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  scale_color_brewer(palette = "Dark2") +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  theme_classic(base_size = 20) +
+  NULL
+
+ggsave("figures/sub_areas_stomach.png", width = 9, height = 9, dpi = 600)
+```
+
+Now save and wait for the next data!
+```{r, save}
+write.csv(full_dat, "data/for_analysis/stomach/full_stomach_data_20.12.16.csv")
+
+# Only recent years
+sub_full_dat <- filter(full_dat, Year > 2014)
+write.csv(sub_full_dat, "data/for_analysis/stomach/2015-2018_stomach_data_20.12.16.csv")
+```
+

@@ -640,13 +640,14 @@ pred_grid2 <- pred_grid2 %>% mutate(sub_area = fct_recode(sub_area,
                                                           "4" = "28"))
 
 # Now modify them...
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 56.1 & sub_area == 2, "3", sub_area))
+pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 56.15 & sub_area == 2, "3", sub_area))
 pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lon > 17.55 & sub_area == 3, "4", sub_area))
 pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 57.4 & lon < 17.7 & sub_area == 4, "3", sub_area))
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 55.44 & sub_area == 1, "2", sub_area))
-  
+pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 55.5 & sub_area == 1, "2", sub_area))
+pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat < 55.5 & lon > 14.3, "2", sub_area))
+
 ggplot(pred_grid2, aes(x = lon, y = lat, color = sub_area)) +
-  geom_point() +
+  geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
   scale_color_brewer(palette = "Dark2") +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
@@ -654,6 +655,8 @@ ggplot(pred_grid2, aes(x = lon, y = lat, color = sub_area)) +
   theme_classic(base_size = 20) +
   geom_point(data = d, aes(Longitud, Latitud), inherit.aes = FALSE, color = "black", size = 0.2) + # add data! 
   NULL
+
+ggsave("figures/sub_areas_predgrid.png", width = 9, height = 9, dpi = 600)
 ```
 
 Finally, drop NA's and save
