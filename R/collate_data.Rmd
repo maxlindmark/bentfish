@@ -1,0 +1,564 @@
+---
+title: "Joining benthic data"
+author: "Max Lindmark"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.asp = 0.618,
+  fig.align ='center'
+)
+```
+
+## Overview
+
+The goal with this script is to merge all benthic datasets to a complete one in a tidy 
+format, where 1 row = 1 sample (by species). 
+
+#### Benthic samples
+
+- What happens here is that I first do a full join for abundance and biomass data.
+Next I do a left join to add in taxonomic information to easily navigate between the
+species and groups present in the abundance and biomass data. Lastly, I do a left join
+with the provinfo data to provide each sample ID with geographic coordinates.
+
+After that I show some basic exploratory plots that can be used as templates for 
+exploring e.g. certain species or years in more detail, simply by applying different
+filters and data manipulations.
+
+The data were sent out by Mattias Sköld, and are also stored here in this RProject,
+as they came.
+
+Please help me out finding all the errors and loopholes! I have not worked with this
+data before.
+
+That said, let's start. First, read in some helpful packages:
+
+```{r, warning=FALSE, message=FALSE}
+rm(list = ls()) # Clear console history (restart r for complete fresh start)
+
+# Load libraries (install first if needed)
+library(tidyverse)
+library(tidylog)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(RColorBrewer)
+library(forcats)
+library(gapminder)
+library(viridis)
+library(raster)
+
+theme_set(theme_classic())
+
+# Quick and dirty way to plot spatial data
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+xlim <- c(12.99, 19.97) # c(min(dat$Longitud), max(dat$Longitud))
+ylim <- c(55.12, 60.39) # c(min(dat$Latitud), max(dat$Latitud))
+
+# Define a function for plotting maps...
+theme_map <- function () { 
+  theme(
+    text = element_text(size = 8),
+    legend.position = "bottom", 
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    axis.text = element_text(size = 6))
+}
+```
+
+Next start by collating and cleaning the benthic data
+
+## Benthic data
+
+Next we read in the data (abundans, biomass and provinfo) as they came and do so minor tidying up:
+```{r, warning=FALSE, message=FALSE}
+# I will read them as they came - tab delimited .txt files. 
+abun <- read_delim("data/benthic_data/abundans.txt",
+                    skip = 1, delim = "\t") # skip 1st row
+
+biom <- read_delim("data/benthic_data/biomassa.txt",
+                    skip = 1, delim = "\t") # skip 1st row
+
+# Remove the 4th column because it's empty in the data and only added with blank cells
+abun <- abun %>% dplyr::select(-"X4")
+biom <- biom %>% dplyr::select(-"X4")
+
+# The prov_info file does not have a header row
+# Also, open it first in Firefox, click view and find it's encoding. On my machine I
+# need to specify that manually. Therefore I use the function read.delim not read_delim
+# and convert it to a tibble afterwards
+prov_info <- read.delim("data/benthic_data/provinfo.txt",
+                        sep = "\t", fileEncoding= "windows-1252") 
+
+prov <- tibble(prov_info)
+
+# Inspect the structure of the datasets 
+str(abun)
+str(biom)
+
+# Biomass is continuous and separated by comma as a character. as.numeric won't do the trick
+head(biom$biomassa)
+biom$biomassa <- as.numeric(sub(",", ".", biom$biomassa, fixed = TRUE))
+head(biom$biomassa)
+
+str(prov)
+
+# Convert date in prov to date type
+prov$Datum <- as.Date(prov$Datum)
+```
+
+At this point, the data are already 1 row = 1 sample. It might come from the same station, however, so one idea is to aggregate this. If that's appropriate or not depends on how we use the data. I will not do it here for now.
+
+Now let's join the different datasets.
+
+Start with biomass and abundance and join by a unique id in order to get a single data.
+
+```{r, warning=FALSE, message=FALSE}
+# Which columns are *not* in the other data set?
+# The only columns that differ are "antal" and "biomass", so let's just do a left_join
+colnames(abun)[!colnames(abun) %in% colnames(biom)]
+colnames(biom)[!colnames(biom) %in% colnames(abun)]
+
+# Ensure that ID does not restart over year etc.
+length(unique(abun$provID))
+length(unique(paste(abun$provID, abun$artal)))
+
+length(unique(biom$provID))
+length(unique(paste(biom$provID, biom$artal)))
+
+# The data are of different lengths. There are more IDs in the abundance data
+
+# Create a new ID column that is the provID + taxa so that I can match in the data
+abun$id_yeartax <- paste(abun$provID, abun$taxa, sep = ".")
+biom$id_yeartax <- paste(biom$provID, biom$taxa, sep = ".")
+
+# Check that we only have one row per id!
+biom %>% 
+  group_by(id_yeartax) %>% 
+  summarise(n = n()) %>% 
+  distinct(n)
+
+abun %>% 
+  group_by(id_yeartax) %>% 
+  summarise(n = n()) %>% 
+  distinct(n)
+
+# Yes!
+
+# Now we can do the full_join to add biomass data as a column to the abundance dataset.
+# We don't do a left_join here because there are some rows that do not exist in the abundance data and vice versa (check below which ID's are *not* in the other data set).
+id_not_in_biom <- abun$id_yeartax[!abun$id_yeartax %in% biom$id_yeartax]
+id_not_in_abun <- biom$id_yeartax[!biom$id_yeartax %in% abun$id_yeartax]
+
+length(id_not_in_biom)
+length(id_not_in_abun)
+
+# The new data will be called "dat". First drop some non-needed columns in the biomass data
+biom_small <- biom %>% dplyr::select(biomassa, id_yeartax)
+
+dat <- full_join(abun, biom_small, by = "id_yeartax")
+# Now we got 98,044 rows, of which 95,925 are common id's (98,044 - 95,925 = length(id_not_in_biom) + length(id_not_in_abun))
+
+# Check it worked...
+nrow(dat)
+colnames(dat)
+
+# Check the 5th ID that is in the abun but not in the biom
+test_id <- id_not_in_biom[5]
+
+# Check in the abun data
+abun %>% filter(id_yeartax == test_id)
+biom %>% filter(id_yeartax == test_id)
+dat %>% filter(id_yeartax == test_id)
+
+# Looks correct!
+```
+
+Now I want the taxonomic information from the file "Mattias BenthFish artlista.xlsx". The goal is to have the columns "taxonID", "Stam", "Klass", "Ordning", "Familj" in the abun and biom data so that rookies with no taxonomic skills whatsoever like myself more easily can get an overview.
+
+```{r, warning=FALSE, message=FALSE}
+taxon_info <- readxl::read_xlsx("data/benthic_data/Mattias BenthFish artlista.xlsx")
+taxon_info
+
+# Now do a left_join to add the full taxon information to dat from taxon_info
+# (First copy the taxa column so that I can verify it after)
+dat$taxa_original <- dat$taxa
+dat <- left_join(dat, taxon_info, by = "taxa")
+
+# Check it worked
+dat %>% 
+  dplyr::select(c(taxa_original, colnames(taxon_info))) %>% 
+  dplyr::select(-c(Synonymer, Auktor, taxonID))  # Remove these for checking only
+```  
+
+Lastly, we want provinfo data to be joined in as well to get e.g. coordinates
+
+```{r, warning=FALSE, message=FALSE}
+colnames(prov)
+colnames(dat)
+
+# We will save all information from here as I don't know what all columns mean. Here we use the provID as the key
+prov <- prov %>% dplyr::select(-artal, -djup, -Datum) # To not get double columns in new data
+dat <- left_join(dat, prov, by = "provID")
+
+str(dat)
+
+# Need to change the classes of coordinates
+head(dat$Latitud)
+dat$Latitud <- as.numeric(sub(",", ".", dat$Latitud, fixed = TRUE))
+head(dat$Latitud)
+
+dat$Longitud <- as.numeric(sub(",", ".", dat$Longitud, fixed = TRUE))
+
+# Remove NA-coordinates (22... hmm, could be ones that were not in the abundance data but not in the biomass data. Doesn't matter though!)
+dat <- dat %>% drop_na(c(Longitud, Latitud))
+```
+
+Now add in the depth based on a raster (so that it's identical to the prediction grid)
+
+```{r, message=FALSE}
+west <- raster("data/depth_geo_tif/D5_2018_rgb-1.tif")
+#plot(west)
+
+east <- raster("data/depth_geo_tif/D6_2018_rgb-1.tif")
+#plot(east)
+
+dep_rast <- raster::merge(west, east)
+
+dat$depth_rast <- extract(dep_rast, dat[, 27:26])
+
+# Convert to depth (instead of elevation)
+ggplot(dat, aes(depth_rast)) + geom_histogram()
+dat$depth_rast <- (dat$depth_rast - max(dat$depth_rast)) *-1
+ggplot(dat, aes(depth_rast)) + geom_histogram()
+
+# Compare to built in depth data
+ggplot(dat, aes(djup, depth_rast)) + 
+  geom_point() +
+  geom_abline(color = "red")
+
+ymin = 54; ymax = 58; xmin = 9.5; xmax = 22
+
+dat %>% 
+  filter(depth_rast > 0) %>% 
+  ggplot(., aes(Longitud, Latitud, color = depth_rast)) + 
+  scale_color_viridis() +
+  geom_sf(data = world, inherit.aes = F, size = 0.2, fill = NA) +
+  geom_point(size = 1) + 
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  NULL
+```
+
+Split the date column so that it will be easier to by month subset later
+
+```{r split date column}
+dat <- dat %>%
+  separate(datum, c("Year", "Month", "Day"), sep = "-") %>%
+  mutate(Year = as.numeric(Year),
+         Month = as.numeric(Month),
+         Day = as.numeric(Day))
+```
+
+We can now save this complete data set to avoid having to run all this code again
+
+```{r, message=FALSE}
+# Now we can save the data
+write.csv(dat, "data/data_complete.csv")
+```
+
+After that, we can also do some visual exploration of the data
+
+```{r, fig.align="center", warning=FALSE, message=FALSE}
+colnames(dat)
+
+# Color by taxonomic information
+# Expand color palette
+colourCount = length(unique(dat$Ordning))
+getPalette = colorRampPalette(brewer.pal(9, "Set2"))
+
+# Frequency by Stam fill by Klass in data
+dat %>%
+  ggplot(., aes(x = forcats::fct_infreq(Stam), fill = Klass)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Stam/Klass") +
+  xlab("Stam") +
+  NULL
+
+# Frequency by Klass fill by Ordning in data
+dat %>%
+  ggplot(., aes(x = forcats::fct_infreq(Klass), fill = Ordning)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Filter the most common "Klass" and plot by year
+common_class <- 
+  c("Bivalvia", "Gastropoda", "Insecta", "Malacostraca", " Polychaeta", "Enopla")
+
+# We'll split this plot into 2 to get a better view
+
+# Plot 1/2
+dat %>%
+  filter(Klass %in% common_class & artal < 1999) %>% 
+  ggplot(., aes(x = forcats::fct_infreq(Klass), fill = Ordning)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  facet_wrap(~artal) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Plot 2/2
+dat %>%
+  filter(Klass %in% common_class & artal > 1999) %>% 
+  ggplot(., aes(x = forcats::fct_infreq(Klass), fill = Ordning)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  facet_wrap(~artal) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Biomass by Klass fill by Ordning in data
+dat %>%
+  drop_na("biomassa") %>% 
+  group_by(Klass, Ordning) %>% 
+  summarise(tot_bio = sum(biomassa)) %>% 
+  ggplot(., aes(x = reorder(Klass, -tot_bio, sum), y = tot_bio, fill = Ordning)) +
+  geom_bar(stat = "identity") +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Biomass Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Abundance by Klass fill by Ordning in data
+dat %>%
+  drop_na("antal") %>% 
+  group_by(Klass, Ordning) %>% 
+  summarise(tot_abund = sum(antal)) %>% 
+  ggplot(., aes(x = reorder(Klass, -tot_abund, sum), y = tot_abund, fill = Ordning)) +
+  geom_bar(stat = "identity") +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Abundance Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+#... And many more plots can be made like this, just change filters and variables
+```
+
+We can also plot the data on maps...
+
+```{r, warning=FALSE, message=FALSE}
+# Plot sample intensity in space and time
+dat %>%
+  filter(Klass %in% common_class) %>%
+  distinct(provID, .keep_all = T) %>%
+  ggplot(., aes(x = Longitud, y = Latitud)) +
+    geom_point(size = 0.1, color = "red") +
+    facet_wrap(~artal, ncol = 10) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Locations of samples (all)") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    NULL
+```
+
+We can also plot time series by station, and for species groups used in Haase *et al.* (2020) for describing the diet of cod and flounder
+
+**Flounder**: Amphipoda, *Saduria entomon*, *Mytilus sp.*, *Limecola balthica*, "Other inverts"
+
+**Cod**: Polychaeta, Cumacea, *Saduria entomon*, Mysida, "Other inverts"
+
+Let's now make a new category based on the above (I suggest using "Other inverts" as all remaining taxa):
+
+```{r, warning=FALSE, message=FALSE}
+# First decide how to subset the data to fit the above categories
+# Flounder
+filter(dat, Ordning == "Amphipoda") # This is easy
+filter(dat, taxa == "Saduria entomon") # This is easy
+unique(filter(dat, Ordning == "Mytiloida")$taxa) # For Mytilus sp. we can use the "Ordning" Mytiloida
+filter(dat, taxa == "Limecola balthica") # This is also easy
+
+# Cod
+filter(dat, Klass == "Polychaeta") # Easy
+filter(dat, Ordning == "Cumacea") # Easy
+filter(dat, Ordning == "Mysida"); filter(dat, Familj == "Mysidae")  # Not sure how to deal with this one, maybe there aren't any in the data. Skip for now
+
+# Ok, based on the species groups, create a new variable for grouping taxa based in importance in cod and flounder diets
+dat <- dat %>% 
+  mutate(species_group = "Other inverts") %>% 
+  mutate(species_group = ifelse(Ordning == "Amphipoda", "Amphipoda", species_group),
+         species_group = ifelse(taxa == "Saduria entomon", "Saduria entomon", species_group),
+         species_group = ifelse(Ordning == "Mytiloida", "Mytiloida", species_group),
+         species_group = ifelse(taxa == "Limecola balthica", "Limecola balthica", species_group),
+         species_group = ifelse(Klass == "Polychaeta", "Polychaeta", species_group),
+         species_group = ifelse(Ordning == "Cumacea", "Cumacea", species_group)) %>% 
+  mutate(species_group = ifelse(is.na(species_group) == TRUE, "Other inverts", species_group)) %>% # Replace the NA with other inverts, because that's where they belong...
+  mutate(species_group = factor(species_group))
+```
+
+More plots...
+
+```{r, message=FALSE}
+# Plot the annual average of the total biomass of the species_group within a sample
+dat %>% 
+  group_by(species_group, artal, provID) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  group_by(species_group, artal) %>% # Now average these by year and by species
+  mutate(ave_biomass = mean(tot_biomass_sample)) %>% # Calculate mean of total biomass by species group per unique sample
+  ungroup() %>% 
+  ggplot(., aes(artal, ave_biomass, fill = species_group)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_brewer(palette = "Set2")
+
+# Same as above but with abundance
+dat %>% 
+  group_by(species_group, artal, provID) %>% 
+  drop_na(antal) %>% 
+  summarise(tot_abun_sample = sum(antal)) %>% 
+  ungroup() %>% 
+  group_by(species_group, artal) %>%
+  mutate(ave_abun = mean(tot_abun_sample)) %>%
+  ungroup() %>% 
+  ggplot(., aes(artal, ave_abun, fill = species_group)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_brewer(palette = "Set2")
+
+# Looks like something happened in ~1980 - likely due to spatial extent of sampling increasing introducing a bias
+
+# Plot normalized biomasses on a map from 2015 and forward (from when we have data on both cod and flounder diets)
+dat %>%
+  filter(!species_group == "Other inverts") %>% 
+  group_by(species_group, artal, Latitud, Longitud) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  filter(artal > 2014) %>% 
+  filter(species_group %in% unique(species_group)[1:3]) %>% 
+  group_by(species_group) %>% 
+  mutate(max_tot_biomass = max(tot_biomass_sample)) %>%
+  ungroup() %>% 
+  mutate(tot_biomass_sample_norm = tot_biomass_sample / max_tot_biomass) %>% 
+  ggplot(., aes(x = Longitud, y = Latitud, color = log(tot_biomass_sample_norm))) +
+    geom_point() +
+    facet_grid(species_group ~ artal) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Biomass normalized to max biomass by species group and location") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    scale_color_viridis() +
+    NULL
+
+# Same plot for the remaining species groups
+dat %>%
+  filter(!species_group == "Other inverts") %>% 
+  group_by(species_group, artal, Latitud, Longitud) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  filter(artal > 2014) %>% 
+  filter(species_group %in% unique(species_group)[4:6]) %>% 
+  group_by(species_group) %>% 
+  mutate(max_tot_biomass = max(tot_biomass_sample)) %>%
+  ungroup() %>% 
+  mutate(tot_biomass_sample_norm = tot_biomass_sample / max_tot_biomass) %>% 
+  ggplot(., aes(x = Longitud, y = Latitud, color = log(tot_biomass_sample_norm))) +
+    geom_point() +
+    facet_grid(species_group ~ artal) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Biomass normalized to max biomass by species group and location") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    scale_color_viridis() +
+    NULL
+
+# Plot samples of saduria for all years
+dat %>%
+  filter(species_group == "Saduria entomon") %>%
+  group_by(artal, Latitud, Longitud) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  mutate(max_tot_biomass = max(tot_biomass_sample)) %>%
+  ungroup() %>% 
+  mutate(tot_biomass_sample_norm = tot_biomass_sample / max_tot_biomass) %>% 
+  ggplot(., aes(x = Longitud, y = Latitud, color = log(tot_biomass_sample_norm))) +
+    geom_point() +
+    facet_wrap(~ artal, ncol = 10) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Biomass normalized to max biomass across samples") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    scale_color_viridis() +
+    NULL
+
+# Plot time series of the annual average of the total biomass in each sample by species_group. This assumes sampling locations haven't changed in a way leading to bias.
+# Filter years after 1983 because of the low sample size before that
+dat %>% 
+  filter(!species_group == "Other inverts") %>% 
+  group_by(species_group, artal, provID) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  group_by(species_group, artal) %>% # Now average these by year and by species group
+  mutate(ave_biomass = mean(tot_biomass_sample)) %>% # Calculate the annual mean of total biomass by species group per unique sample
+  ungroup() %>%
+  filter(artal > 1983) %>% 
+  ggplot(., aes(x = artal, y = ave_biomass, color = species_group)) +
+    geom_point(size = 2) +
+    stat_smooth(formula = y ~ s(x, bs = "cs", k = 3)) +
+    facet_wrap(~ species_group, scales = "free_y") +
+    coord_cartesian(expand = 0) +
+    theme(aspect.ratio = 1, legend.position = "bottom") +
+    scale_color_brewer(palette = "Set2") +
+    NULL
+```
+
+Interesting!
+
+However, a proper index should be calculated to account for the spatiotemporal correlation structure of the residuals, and thus also the changes in sampling stations across years. And for the compound groups in particular, we should make sure that we measure the same species each year. 
+
+So, which selections and group structure all boils down to the tradeoff between spatial, temporal and taxonomic resolution.
+
+* **Environmental variables**: Can be added either by using model outputs from SMHI (available between 1993-2019) or by selecting specific stations that are representative of the area (e.g. depth stratified)
+
+* **Stomach data & individual-level biological data**: Adding newer data is in progress - waiting for samples.
+
+* **Catch data (for index of abundance or density)**: Latest data can be downloaded from DATRAS and matched to stomach data
