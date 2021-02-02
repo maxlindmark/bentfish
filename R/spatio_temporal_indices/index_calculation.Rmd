@@ -1,0 +1,489 @@
+---
+title: "Spatiotemporal indices of biomass density by species group"
+author: "Max Lindmark"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+  df_print: paged
+pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+  
+```{r setup, include = FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.asp = 0.618,
+  fig.align ='center'
+)
+```
+
+# Fit a spatiotemporal model to Saduria data for index standardization
+
+## First read in and clean data
+```{r libraries, message=FALSE}
+# Load libraries, install if needed
+library(tidyverse); theme_set(theme_classic())
+library(readxl)
+library(tidylog)
+library(RCurl)
+library(sp)
+library(geosphere)
+library(viridis)
+library(RColorBrewer)
+library(patchwork)
+library(janitor)
+library(icesDatras)
+library(mapdata)
+library(patchwork)
+library(rgdal)
+library(raster)
+library(sf)
+library(rgeos)
+library(chron)
+library(lattice)
+library(ncdf4)
+library(sdmTMB) # remotes::install_github("pbs-assess/sdmTMB")
+library(marmap)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(mapplots)
+library(mgcv)
+library(qwraps2) # To load entire cache in interactive r session, do: qwraps2::lazyload_cache_dir(path = "saduria_index_cache/html")
+
+# For adding maps to plots
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Specify map ranges
+ymin = 55.5; ymax = 58; xmin = 12.5; xmax = 20
+```
+
+## Read the prediction grid
+
+```{r read pred grid, message=FALSE, warning=FALSE}
+# And now read in pred_grid2 which has oxygen values at location and time and depth:
+# pred_grid <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/pred_grid.csv")
+pred_grid <- read.csv("data/for_analysis/pred_grid.csv")
+
+pred_grid <- pred_grid %>%
+  mutate(depth_scaled = (depth - mean(sad$depth))/sd(sad$depth)) %>% 
+  mutate(depth_scaled_sq = depth_scaled*depth_scaled) %>% 
+  mutate(year_f = factor(year),
+         year = as.integer(year)) %>% 
+  filter(year > 2014) 
+```
+
+
+# Saduria
+## Read data
+```{r read data, message=FALSE}
+# sad <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/saduria.csv") %>%
+#   dplyr::select(-X1)
+sad <- read.csv("data/for_analysis/saduria.csv") %>% dplyr::select(-X)
+
+sad <- sad %>%
+  filter(lat < ymax & lat > ymin & lon > xmin & lon < xmax) %>% 
+  filter(year > 2014) %>% 
+  mutate(year_f = as.factor(year_f),
+         depth_scaled_sq = depth_scaled*depth_scaled)
+
+unique(is.na(sad))
+
+nrow(sad)
+
+hist(sad$biomass)
+```
+
+Crop pred grid to match saduria
+
+```{r crop pred grid for saduria}
+# Subset the prediction grid to match saduria data
+pred_grid_sad <- pred_grid
+
+tf_sad <- exclude.too.far(pred_grid_sad$lon, pred_grid_sad$lat, sad$lon, sad$lat, 0.07) # 0.03 seems reasonable
+
+# Filter the grid points that are not too far from the data
+pred_grid_sad$too_far <- tf_sad
+
+# Plot again
+pred_grid_sad %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(sub_area))) +
+  geom_raster() +
+  geom_point(data = sad, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_sad <- pred_grid_sad %>% filter(too_far == FALSE)
+```
+
+## Fit models using `sdmTMB`
+Fit a biomass model assuming a Tweedie distribution and biomass as the response.
+
+Make spde mesh
+
+```{r make barrier spde mesh, results='hide', cache=TRUE, message=FALSE}
+# Non-island version
+sad_spde <- make_mesh(data = sad, xy_cols = c("lon", "lat"), n_knots = 80, type = "kmeans", seed = 42)
+```
+
+Fit the model
+
+```{r fit tweedie model, cache=TRUE}
+m_sad <- sdmTMB(formula = biomass ~ year_f - 1 + depth_scaled + depth_scaled_sq,  data = sad,
+                time = "year", spde = sad_spde, family = tweedie(link = "log"),
+                ar1_fields = TRUE, include_spatial = FALSE, spatial_trend = FALSE, spatial_only = FALSE)
+
+# Check model
+print(m_sad)
+
+# Check AR1 parameter
+tidy(m_sad, effects = "ran_pars", conf.int = TRUE) %>% filter(term == "rho")
+# Quite large
+
+# Check residuals
+d2_sad <- sad
+d2_sad$residuals <- residuals(m_sad)
+
+# Pretty good!
+qqnorm(d2_sad$residuals); abline(a = 0, b = 1)
+
+# Lastly, plot residuals on a map
+ggplot(d2_sad, aes(lon, lat, colour = residuals)) +
+  geom_point(size = 0.5) +
+  facet_wrap(~year) +
+  scale_color_gradient2()
+
+# Plot the marginal effect of depth:
+nd_sad <- data.frame(depth_scaled = seq(min(sad$depth_scaled), max(sad$depth_scaled), length.out = 100))
+nd_sad$depth_scaled_sq <- nd_sad$depth_scaled*nd_sad$depth_scaled
+nd_sad$year <- as.integer(max(sad$year))
+nd_sad$year_f <- factor(nd_sad$year)
+
+p_sad <- predict(m_sad, newdata = nd_sad, se_fit = TRUE, re_form = NA)
+
+ggplot(p_sad, aes(depth_scaled, exp(est),
+  ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+  geom_line() + geom_ribbon(alpha = 0.4)
+```
+
+Make prediction onto the new grid
+
+```{r predict on grid, message=FALSE}
+# Predict using the Tweedie model
+sad_pred_grid <- predict(m_sad, newdata = pred_grid_sad)
+
+# Plot predictions!
+sad_pred_grid %>% 
+  ggplot(., aes(lon, lat, fill = est)) +
+  geom_raster() +
+  facet_wrap(~year, ncol = 2) +
+  scale_fill_viridis(option = "magma", na.value = "transparent") + 
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  ggtitle("Prediction (random + fixed)")
+
+# Plot spatiotemporal random effects
+sad_pred_grid %>% 
+  ggplot(., aes(lon, lat, fill = epsilon_st)) +
+  geom_raster() +
+  facet_wrap(~year, ncol = 2) +
+  scale_fill_gradient2(na.value = "transparent") +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  ggtitle("Spatiotemporal random effect")
+```
+
+Now calculate the index by year and sub area
+
+```{r calculate index, cache=TRUE, message=FALSE}
+# From these models, predict annual biomass for each sub area
+# sort(unique(sad$sub_area))
+
+# Sub-area 25
+preds25 <- predict(m_sad, filter(pred_grid_sad, sub_area == 25),
+                   return_tmb_object = TRUE) # Predict using the grid for subarea
+
+ind25 <- get_index(preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+# Then divide that by the total area
+ncells25 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+
+# This is the same as simply dividing by ncells2
+ind25 <- ind25 %>% mutate(est_g_m2 = (est) / ncells25,
+                          lwr_g_m2 = (lwr) / ncells25,
+                          upr_g_m2 = (upr) / ncells25,
+                          sub_area = 25)
+
+# Sub-area 27
+preds27 <- predict(m_sad, filter(pred_grid_sad, sub_area == 27),
+                   return_tmb_object = TRUE) # Predict using the grid for subarea
+
+ind27 <- get_index(preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+# Then divide that by the total area
+ncells27 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+
+# This is the same as simply dividing by ncells2
+ind27 <- ind27 %>% mutate(est_g_m2 = (est) / ncells27,
+                          lwr_g_m2 = (lwr) / ncells27,
+                          upr_g_m2 = (upr) / ncells27,
+                          sub_area = 27)
+ 
+# Sub-area 28
+preds28 <- predict(m_sad, filter(pred_grid_sad, sub_area == 28),
+                   return_tmb_object = TRUE) # Predict using the grid for subarea
+
+ind28 <- get_index(preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+# Then divide that by the total area
+ncells28 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+
+# This is the same as simply dividing by ncells2
+ind28 <- ind28 %>% mutate(est_g_m2 = (est) / ncells28,
+                          lwr_g_m2 = (lwr) / ncells28,
+                          upr_g_m2 = (upr) / ncells28,
+                          sub_area = 28)
+
+# Merge prediction-data
+sad_preds <- bind_rows(ind25, ind27, ind28)
+
+# Compare to data quickly
+p <- sad_preds %>%
+  dplyr::select(year, est_g_m2, sub_area) %>%
+  rename("biomass" = "est_g_m2") %>% 
+  mutate(source = "pred",
+         biomass = biomass) %>% 
+  arrange(year, sub_area)
+
+d <- sad %>%
+  group_by(year, sub_area) %>% 
+  summarise(biomass = mean(biomass)) %>% 
+  mutate(source = "data") %>% 
+  arrange(year, sub_area)
+  
+ggplot(bind_rows(p, d), aes(year, biomass, color = source)) +
+  geom_point(size = 4) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ sub_area, scales = "free", ncol = 2) +
+  theme_classic(base_size = 15)
+```
+
+# Amphipoda
+## Read data
+```{r read data, message=FALSE}
+# amp <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/amphipoda.csv") %>%
+#   dplyr::select(-X1)
+amp <- read.csv("data/for_analysis/amphipoda.csv") %>% dplyr::select(-X)
+
+amp <- amp %>%
+  filter(lat < ymax & lat > ymin & lon > xmin & lon < xmax) %>% 
+  filter(year > 2014) %>% 
+  mutate(year_f = as.factor(year_f),
+         depth_scaled_sq = depth_scaled*depth_scaled)
+
+unique(is.na(amp))
+
+nrow(amp)
+
+hist(amp$biomass)
+```
+
+## Read the prediction grid
+
+Crop pred grid to match amphipoda
+
+```{r crop pred grid for saduria}
+# Subset the prediction grid to match saduria data
+pred_grid_amp <- pred_grid
+
+tf_amp <- exclude.too.far(pred_grid_amp$lon, pred_grid_amp$lat, amp$lon, amp$lat, 0.07) # 0.03 seems reasonable
+
+# Filter the grid points that are not too far from the data
+pred_grid_amp$too_far <- tf_amp
+
+# Plot again
+pred_grid_amp %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(sub_area))) +
+  geom_raster() +
+  geom_point(data = sad, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_amp <- pred_grid_amp %>% filter(too_far == FALSE)
+```
+
+## Fit models using `sdmTMB`
+Fit a biomass model assuming a Tweedie distribution and biomass as the response.
+
+Make spde mesh
+
+```{r make barrier spde mesh, results='hide', cache=TRUE, message=FALSE}
+# Non-island version
+amp_spde <- make_mesh(data = amp, xy_cols = c("lon", "lat"), n_knots = 80, type = "kmeans", seed = 42)
+```
+
+Fit the model
+
+```{r fit tweedie model, cache=TRUE}
+m_amp <- sdmTMB(formula = biomass ~ year_f - 1 + depth_scaled + depth_scaled_sq,  data = amp,
+                time = "year", spde = amp_spde, family = tweedie(link = "log"),
+                ar1_fields = TRUE, include_spatial = FALSE, spatial_trend = FALSE, spatial_only = FALSE)
+
+# Check model
+print(m_amp)
+
+# Check AR1 parameter
+tidy(m_amp, effects = "ran_pars", conf.int = TRUE) %>% filter(term == "rho")
+# Quite large
+
+# Check residuals
+d2_amp <- amp
+d2_amp$residuals <- residuals(m_amp)
+
+# Pretty good!
+qqnorm(d2_amp$residuals); abline(a = 0, b = 1)
+
+# Lastly, plot residuals on a map
+ggplot(d2_amp, aes(lon, lat, colour = residuals)) +
+  geom_point(size = 0.5) +
+  facet_wrap(~year) +
+  scale_color_gradient2()
+
+# Plot the marginal effect of depth:
+nd_amp <- data.frame(depth_scaled = seq(min(amp$depth_scaled), max(amp$depth_scaled), length.out = 100))
+nd_amp$depth_scaled_sq <- nd_amp$depth_scaled*nd_amp$depth_scaled
+nd_amp$year <- as.integer(max(amp$year))
+nd_amp$year_f <- factor(nd_amp$year)
+
+p_amp <- predict(m_amp, newdata = nd_amp, se_fit = TRUE, re_form = NA)
+
+ggplot(p_amp, aes(depth_scaled, exp(est),
+  ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+  geom_line() + geom_ribbon(alpha = 0.4)
+```
+
+Make prediction onto the new grid
+
+```{r predict on grid, message=FALSE}
+# Predict using the Tweedie model
+amp_pred_grid <- predict(m_amp, newdata = pred_grid_amp)
+
+# Plot predictions!
+amp_pred_grid %>% 
+  ggplot(., aes(lon, lat, fill = est)) +
+  geom_raster() +
+  facet_wrap(~year, ncol = 2) +
+  scale_fill_viridis(option = "magma", na.value = "transparent") + 
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  ggtitle("Prediction (random + fixed)")
+
+# Plot spatiotemporal random effects
+amp_pred_grid %>% 
+  ggplot(., aes(lon, lat, fill = epsilon_st)) +
+  geom_raster() +
+  facet_wrap(~year, ncol = 2) +
+  scale_fill_gradient2(na.value = "transparent") +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  ggtitle("Spatiotemporal random effect")
+```
+
+Now calculate the index by year and sub area
+
+```{r calculate index, cache=TRUE, message=FALSE}
+# From these models, predict annual biomass for each sub area
+# sort(unique(amp$sub_area))
+
+# Sub-area 25
+preds25 <- predict(m_amp, filter(pred_grid_amp, sub_area == 25),
+                   return_tmb_object = TRUE) # Predict using the grid for subarea
+
+ind25 <- get_index(preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+# Then divide that by the total area
+ncells25 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+
+# This is the same as simply dividing by ncells2
+ind25 <- ind25 %>% mutate(est_g_m2 = (est) / ncells25,
+                          lwr_g_m2 = (lwr) / ncells25,
+                          upr_g_m2 = (upr) / ncells25,
+                          sub_area = 25)
+
+# Sub-area 27
+preds27 <- predict(m_amp, filter(pred_grid_amp, sub_area == 27),
+                   return_tmb_object = TRUE) # Predict using the grid for subarea
+
+ind27 <- get_index(preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+# Then divide that by the total area
+ncells27 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+
+# This is the same as simply dividing by ncells2
+ind27 <- ind27 %>% mutate(est_g_m2 = (est) / ncells27,
+                          lwr_g_m2 = (lwr) / ncells27,
+                          upr_g_m2 = (upr) / ncells27,
+                          sub_area = 27)
+ 
+# Sub-area 28
+preds28 <- predict(m_amp, filter(pred_grid_amp, sub_area == 28),
+                   return_tmb_object = TRUE) # Predict using the grid for subarea
+
+ind28 <- get_index(preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+# Then divide that by the total area
+ncells28 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+
+# This is the same as simply dividing by ncells2
+ind28 <- ind28 %>% mutate(est_g_m2 = (est) / ncells28,
+                          lwr_g_m2 = (lwr) / ncells28,
+                          upr_g_m2 = (upr) / ncells28,
+                          sub_area = 28)
+
+# Merge prediction-data
+amp_preds <- bind_rows(ind25, ind27, ind28)
+
+# Compare to data quickly
+p <- amp_preds %>%
+  dplyr::select(year, est_g_m2, sub_area) %>%
+  rename("biomass" = "est_g_m2") %>% 
+  mutate(source = "pred",
+         biomass = biomass) %>% 
+  arrange(year, sub_area)
+
+d <- amp %>%
+  filter(!sub_area == 24) %>% 
+  group_by(year, sub_area) %>% 
+  summarise(biomass = mean(biomass)) %>% 
+  mutate(source = "data") %>% 
+  arrange(year, sub_area)
+  
+ggplot(bind_rows(p, d), aes(year, biomass, color = source)) +
+  geom_point(size = 4) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ sub_area, scales = "free", ncol = 2) +
+  theme_classic(base_size = 15)
+```
+
+# Mytilus
+# Limecola baltica
+# Polychaeta
+# Cumacea
+# Mysida
+
+
+
