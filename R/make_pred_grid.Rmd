@@ -81,17 +81,30 @@ First create a grid for predictions based on the data (temporary approach!)
 # Read in the benthic data
 d <- read.csv("data/data_complete.csv") %>% dplyr::select(-X)
 
+# Read in the stomach-data (to make the pred grid)
+dd <- read.csv("data/for_analysis/stomach/2015-2018_stomach_data_20.12.16.csv") %>% dplyr::select(-X)
+
+
 ggplot(d, aes(factor(month))) + geom_histogram(stat = "count")
 
-# Filter the months in the spring, which is what we use for this analysis, so that the grid isn't unnecesarily large, and the years after 1983 for coverage
+# Filter the months in the spring, which is what we use for this analysis, so that the grid isn't unnecessarily large, and the years after 1983 for coverage
 d <- d %>% filter(year > 1983 & month > 3 & month < 7)
 
 # Generate the coordinates
 pred_grid <- expand.grid(
-  lat = seq(55, 60.5, by = 0.05),
-  lon = seq(13, 20, by = 0.05))
+  lat = seq(55, 60.5, by = 0.02), 
+  lon = seq(13, 20, by = 0.03))
 
-tf <- exclude.too.far(pred_grid$lon, pred_grid$lat, d$lon, d$lat, 0.015)
+ggplot(pred_grid, aes(lon, lat)) +
+  geom_raster() +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) 
+
+# https://www.nhc.noaa.gov/gccalc.shtml
+# One step in longitude is ~2 km
+# One step in latitude is ~2 km
+
+tf <- exclude.too.far(pred_grid$lon, pred_grid$lat, d$lon, d$lat, 0.035)
 
 plot(pred_grid$lon, pred_grid$lat, pch = ".")
 points(d$Longitud, d$Latitud, col = 2)
@@ -109,27 +122,12 @@ pred_grid$too_far <- tf
 pred_grid %>% 
   filter(too_far == FALSE) %>%
   ggplot(., aes(lon, lat)) + 
-  geom_point(size = 0.1) + 
+  geom_raster() + 
   geom_sf(data = world, inherit.aes = F, size = 0.2, fill = NA) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
   geom_point(data = d, aes(lon, lat), alpha = 0.3,
              inherit.aes = FALSE, color = "red", size = 0.1) +
   NULL
-
-# Just remove the grids just north of Gotland...
-pred_grid <- pred_grid %>% mutate(too_far = ifelse(lat > 58 & lon > 18, TRUE, too_far))
-
-pred_grid %>% 
-  filter(too_far == FALSE) %>%
-  ggplot(., aes(lon, lat)) + 
-  geom_point(size = 0.1) + 
-  geom_sf(data = world, inherit.aes = F, size = 0.2, fill = NA) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
-  geom_point(data = d, aes(lon, lat), alpha = 0.3,
-             inherit.aes = FALSE, color = "red", size = 0.1) +
-  NULL
-
-# Will fix the land issue once we add in the depth variable
 ```
 
 Now add in depth
@@ -151,7 +149,7 @@ ggplot(pred_grid, aes(depth)) + geom_histogram()
 
 pred_grid %>% 
   ggplot(., aes(lon, lat, color = depth)) + 
-  geom_point() + 
+  geom_raster() + 
   geom_sf(data = world, inherit.aes = F, size = 0.2, fill = "white") +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
   NULL
@@ -164,15 +162,15 @@ pred_grid %>%
   filter(too_far == FALSE) %>%
   filter(depth > 0) %>% 
   ggplot(., aes(lon, lat)) + 
-  geom_point(size = 0.1) + 
+  geom_raster(alpha = 0.5) +
   geom_sf(data = world, inherit.aes = F, size = 0.2, fill = NA) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
   geom_point(data = d, aes(lon, lat), alpha = 0.3,
              inherit.aes = FALSE, color = "red", size = 0.1) +
   NULL
 
-# Filter away land and too far grids
-pred_grid <- pred_grid %>% filter(too_far == FALSE) %>% filter(depth > 0)
+#pred_grid <- pred_grid %>% filter(too_far == FALSE & depth > 0)
+pred_grid <- pred_grid %>% filter(depth > 0)
 
 # Before adding the environmental variables (which change over years), make a new pred grid with year as a column
 pred_grid2 <- data.frame(lon = rep(pred_grid$lon, length(unique(d$year))),
@@ -612,16 +610,16 @@ pred_grid2 <- pred_grid2 %>%
                                           "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
   mutate(SubDiv = ifelse(lat > 58.5 & lon > 19, "29", SubDiv)) %>%
   mutate(SubDiv = ifelse(lat > 57 & lat < 58.5 & lon > 19 & lon < 22, "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(lat > 57 & lat < 58.5 & lon > 18 & lon < 22, "28", SubDiv)) %>%
   mutate(SubDiv = ifelse(lat > 57 & lat < 60 & lon > 16 & lon < 18, "27", SubDiv)) %>%
-  mutate(SubDiv = ifelse(lat > 55.5 & lat < 56.5 & lon > 14 & lon < 16, "25", SubDiv)) %>% 
-  mutate(SubDiv = factor(SubDiv))
+  mutate(SubDiv = ifelse(lat > 55.5 & lat < 56.5 & lon > 14 & lon < 16, "25", SubDiv)) #%>% 
+  #mutate(SubDiv = factor(SubDiv))
 
-pred_grid2 <- pred_grid2 %>% drop_na(SubDiv) 
+#pred_grid2 <- pred_grid2 %>% drop_na(SubDiv) 
 
 ggplot(pred_grid2, aes(x = lon, y = lat, color = SubDiv)) +
   geom_point() +
   coord_cartesian(expand = 0) +
-  scale_color_brewer(palette = "Dark2") +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
   theme_classic(base_size = 20) +
@@ -629,32 +627,57 @@ ggplot(pred_grid2, aes(x = lon, y = lat, color = SubDiv)) +
   NULL
 
 # Now do a manual area, similar to sub divisions
-pred_grid2$sub_area <- pred_grid2$SubDiv
+pred_grid2$sub_area <- as.numeric(pred_grid2$SubDiv)
 
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = fct_recode(sub_area,
-                                                          "1" = "24",
-                                                          "2" = "25",
-                                                          "3" = "27",
-                                                          "4" = "28"))
+pred_grid2$sub_area[is.na(pred_grid2$sub_area)] <- 28
 
-# Now modify them...
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 56.15 & sub_area == 2, "3", sub_area))
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lon > 17.55 & sub_area == 3, "4", sub_area))
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 57.4 & lon < 17.7 & sub_area == 4, "3", sub_area))
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat > 55.5 & sub_area == 1, "2", sub_area))
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = ifelse(lat < 55.5 & lon > 14.3, "2", sub_area))
+unique(pred_grid2$sub_area)
 
-ggplot(pred_grid2, aes(x = lon, y = lat, color = sub_area)) +
-  geom_point(size = 0.5) +
+ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(sub_area))) +
+  geom_raster(alpha = 0.5) +
   coord_cartesian(expand = 0) +
-  scale_color_brewer(palette = "Dark2") +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
   theme_classic(base_size = 20) +
-  geom_point(data = d, aes(lon, lat), inherit.aes = FALSE, color = "black", size = 0.2) + # add data! 
+  geom_point(data = d, aes(lon, lat, color = factor(sub_area)),
+             inherit.aes = FALSE, size = 0.3) + # add benthic data!
+  geom_point(data = dd, aes(Long, Lat, color = factor(sub_area)), 
+             inherit.aes = FALSE, size = 0.3, shape = 2) + # add benthic data!
   NULL
 
-ggsave("figures/sub_areas_predgrid.png", width = 9, height = 9, dpi = 600)
+# Now modify them...
+pred_grid2 <- pred_grid2 %>%
+  mutate(sub_area = ifelse(lat > 56.18 & lon < 18, 27, sub_area)) %>% 
+  mutate(sub_area = ifelse(lon > 17.6 & lat >= 56.49, 28, sub_area)) %>% 
+  mutate(sub_area = ifelse(lon > 17 & lat < 56.49, 26, sub_area))
+
+p1 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(sub_area))) +
+  geom_raster(alpha = 0.5) +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  theme_classic(base_size = 16) +
+  geom_point(data = d, aes(lon, lat, color = factor(sub_area)),
+             inherit.aes = FALSE, size = 0.3) + # add benthic data!
+  ggtitle("Benthic data") +
+  guides(color = FALSE) + 
+  NULL
+
+p2 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(sub_area))) +
+  geom_raster(alpha = 0.5) +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  theme_classic(base_size = 16) +
+  geom_point(data = dd, aes(Long, Lat, color = factor(sub_area)), 
+             inherit.aes = FALSE, size = 0.3, shape = 2) + # add benthic data!
+  ggtitle("Stomach data") + 
+  guides(color = FALSE) +
+  NULL
+  
+p1/p2
+
+ggsave("figures/sub_areas_full.png", width = 9, height = 9, dpi = 600)
 ```
 
 Finally, drop NA's and save

@@ -55,8 +55,7 @@ library(qwraps2) # To load entire cache in interactive r session, do: qwraps2::l
 world <- ne_countries(scale = "medium", returnclass = "sf")
 
 # Specify map ranges
-# ymin = 54; ymax = 58; xmin = 9.5; xmax = 22
-ymin = 54; ymax = 58; xmin = 12.5; xmax = 22
+ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
 
 # Make plot function
 plot_map_raster <- function(dat, column = "est") {
@@ -78,7 +77,14 @@ d <- read.csv("data/data_complete.csv") %>%
   mutate(species_group = as.factor(species_group))
 
 # Filter years. Based in previous data exploration we will use data from 1984 and forward for now (when coverage roughly became what it is now)
-d <- d %>% filter(year > 2014) %>% filter(month %in% c(4:6))
+d <- d %>%
+  #filter(year > 2014) %>% # Filter in the analysis script
+  filter(month %in% c(4:6))
+
+# Filter areas
+d <- d %>%
+  drop_na(depth) %>% 
+  filter(lat < ymax & lat > ymin & lon > xmin & lon < xmax)
 
 # Get a vector of the unique sampling ID's so that we can add them as 0's in the presence data
 # First create the ID
@@ -89,6 +95,12 @@ d <- d %>%
 unique_samples <- d %>%
   mutate(sample_id = paste(provID, year, sep = "_")) %>%
   distinct(sample_id)
+
+# Rescale variables (depth)
+d <- d %>%
+  mutate(depth_scaled = (depth - mean(depth))/sd(depth)) %>% 
+  mutate(year_f = factor(year),
+         year = as.integer(year))
 ```
 
 ## Split and clean data by taxonomic group:
@@ -98,15 +110,20 @@ unique(d$species_group)
 ```
 
 ### Saduria
-```{r split and clean data by taxonomic group, message=FALSE, results="hide"}
+```{r saduria, message=FALSE, results="hide"}
 # Filter the saduria data so that we get only hauls with saduria
 sad <- d %>% filter(species_group == "Saduria entomon")
 
+# Drop NA in biomass
+sad <- sad %>% drop_na(biomass)
+
 # Crop the vector of unique samples to only include IDs that are NOT in the saduria data
 no_saduria_samples <- unique_samples$sample_id[!unique_samples$sample_id %in% unique(sad$sample_id)]
+
 no_saduria_samples <- d %>%
   filter(sample_id %in% no_saduria_samples) %>%
-  distinct(sample_id)
+  distinct(sample_id, .keep_all = TRUE) %>% 
+  dplyr::select(-abundance, -biomass, -species_group)
 
 # Check again if these samples are in the saduria data (they shouldn't)
 #sad %>% filter(sample_id %in% c(no_saduria_samples$sample_id))
@@ -114,25 +131,21 @@ no_saduria_samples <- d %>%
 #length(unique(d$sample_id))
 #length(unique(no_saduria_samples$sample_id)) + length(unique(sad$sample_id))
 
-# Now add in these ID's back to the saduria-only data and make them NA
-# We do this by first removing the coordinates from the saduria data (to not make double colums with coordinates).
-# We will match the coordinates by ID from the full data to get all samples
-sad <- sad %>% dplyr::select(-lat, -lon, -year, -depth)
-
+# Now add in these ID's back to the saduria-only data and make them NA for abundance, biomass and species_group
 sad <- bind_rows(sad, no_saduria_samples)
 
-# Now join in the coordinates and year column again using the full data (with all id's and their coords)
-# Only need one row per id so use the distinvt function
-coord_dat <- d %>% dplyr::select(lat, lon, sample_id, year, depth) %>% distinct(sample_id, .keep_all = TRUE)
-sad <- left_join(sad, coord_dat, by = "sample_id")
+# Inspect a non-saduria ID to see how it was combined
+sad %>% filter(sample_id == head(no_saduria_samples$sample_id, 1))
 
-# First, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without saduria
+# Add in the species group
+sad$species_group <- "Saduria entomon"
+# unique(sad$species_group)
+
+# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without saduria
 sad <- sad %>% mutate(abundance = coalesce(abundance, 0L))
 
-# We can see that they come from the non-saduria samples
-# Filter saduria with 0 abundance. Are there any ID's that are not in the vector above?
-# test <- sad %>% filter(abundance == 0)
-# test$sample_id[!test$sample_id %in% unique_samples_saduria_absent$sample_id]
+# If abundance is 0, then biomass should also be (sometimes biomass is NA because it wasn't measured)
+sad <- sad %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
 
 # Ok, check if there are any rows with biomass but no abundance
 sad %>% filter(abundance == 0L) %>% distinct(biomass)
@@ -168,16 +181,130 @@ sad <- sad %>%
   mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
   mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
   mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
-  mutate(biomass = biomass_kg_km2) %>% 
-  dplyr::select(-biomass_kg_km2, -biomass_g_km2, -biomass_g_m2)
+  mutate(biomass = biomass_g_m2)
 
-sad <- sad %>% drop_na(biomass)
+sad <- sad %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
 
 # Finally, save data
 write.csv(sad, "data/for_analysis/saduria.csv")
 ```
 
 ### Amphipoda
+```{r amphipoda, message=FALSE, results="hide"}
+# Filter the saduria data so that we get only hauls with saduria
+amp <- d %>% filter(species_group == "Amphipoda")
+
+# Drop NA in biomass
+amp <- amp %>% drop_na(biomass)
+
+# Crop the vector of unique samples to only include IDs that are NOT in the saduria data
+no_amphipoda_samples <- unique_samples$sample_id[!unique_samples$sample_id %in% unique(amp$sample_id)]
+
+no_amphipoda_samples <- d %>%
+  filter(sample_id %in% no_amphipoda_samples) %>%
+  distinct(sample_id, .keep_all = TRUE) %>% 
+  dplyr::select(-abundance, -biomass, -species_group)
+
+# Check again if these samples are in the amphipoda data (they shouldn't)
+#amp %>% filter(sample_id %in% c(no_amphipoda_samples$sample_id))
+# Compare the lengths of the dataframes to ensure they sum up
+#length(unique(d$sample_id))
+#length(unique(no_amphipoda_samples$sample_id)) + length(unique(amp$sample_id))
+
+# Now add in these ID's back to the saduria-only data and make them NA for abundance, biomass and species_group
+amp <- bind_rows(amp, no_amphipoda_samples)
+
+# Inspect a non-saduria ID to see how it was combined
+amp %>% filter(sample_id == head(no_amphipoda_samples$sample_id, 1))
+
+# Add in the species group
+amp$species_group <- "Amphipoda"
+# unique(sad$species_group)
+
+# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without saduria
+amp <- amp %>% mutate(abundance = coalesce(abundance, 0L))
+
+# If abundance is 0, then biomass should also be (sometimes biomass is NA because it wasn't measured)
+amp <- amp %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# Ok, check if there are any rows with biomass but no abundance
+amp %>% filter(abundance == 0L) %>% distinct(biomass)
+# Nope!
+
+# Because we have multiple taxa, we have to sum across all species
+nrow(amp)
+amp2 <- amp %>%
+  group_by(sample_id) %>%
+  mutate(biomass2 = sum(biomass),
+         abundance2 = sum(abundance)) %>% 
+  ungroup() %>% 
+  distinct(sample_id, .keep_all = TRUE) #%>% 
+  # dplyr::select(-biomass, -abundance) %>% 
+  # rename("biomass2" = "biomass",
+  #        "abundance2" = "abundance")
+
+# Test  
+test <- amp %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% data.frame
+filter(test, sample_id == head(filter(test, n == 2)$sample_id, 1)) %>% data.frame()
+filter(amp2, sample_id == head(filter(test, n == 2)$sample_id, 1)) %>% data.frame()
+
+# Perfect, now rename
+amp <- amp %>%
+  group_by(sample_id) %>%
+  mutate(biomass2 = sum(biomass),
+         abundance2 = sum(abundance)) %>% 
+  ungroup() %>% 
+  distinct(sample_id, .keep_all = TRUE) %>%  
+  dplyr::select(-biomass, -abundance) %>% 
+  rename("biomass" = "biomass2",
+         "abundance" = "abundance2")
+
+# Plot the distribution of abundance per sample_id
+# How many rows do I have per sample_id?
+amp %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+test <- amp %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% data.frame
+
+# How many rows do I have per sample_id AND taxa?
+amp %>% group_by(sample_id, taxa) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+filter(test, n == 2)
+
+# Good... Now plot the distribution of abundances
+ggplot(amp, aes(abundance)) + geom_histogram()
+
+# Probably some outliers! Check
+amp %>% arrange(desc(abundance))
+
+# Not sure, will keep but crop the plot
+
+# Good... Now plot the distribution of abundances
+ggplot(amp, aes(abundance)) + geom_histogram() + xlim(c(-1, 30))
+
+# And the distribution of biomasses:
+# First make the biomass column 0 if abundance is 0 - else NA (because info is missing)
+amp <- amp %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# How many NA biomass data? (only 69 rows..)
+amp %>% drop_na(biomass)
+
+# Good... Now plot the distribution of biomasses
+ggplot(amp, aes(biomass)) + geom_histogram()
+
+# Change unit to g/m2
+amp <- amp %>%
+  mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
+  mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
+  mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
+  mutate(biomass = biomass_g_m2)
+
+amp <- amp %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
+
+# Finally, save data
+write.csv(amp, "data/for_analysis/amphipoda.csv")
+```
+
+
 ### Mytilus
 ### Limecola baltica
 ### Polychaeta

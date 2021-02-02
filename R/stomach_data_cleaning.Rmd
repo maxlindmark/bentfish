@@ -319,8 +319,8 @@ df_full <- df_full %>%
   mutate(SubDiv = ifelse(Lat > 58.5 & Long > 19, "29", SubDiv)) %>%
   mutate(SubDiv = ifelse(Lat > 57 & Lat < 58.5 & Long > 19 & Long < 22, "28", SubDiv)) %>%
   mutate(SubDiv = ifelse(Lat > 57 & Lat < 60 & Long > 16 & Long < 18, "27", SubDiv)) %>%
-  mutate(SubDiv = ifelse(Lat > 55.5 & Lat < 56.5 & Long > 14 & Long < 16, "25", SubDiv)) %>% 
-  mutate(SubDiv = factor(SubDiv))
+  mutate(SubDiv = ifelse(Lat > 55.5 & Lat < 56.5 & Long > 14 & Long < 16, "25", SubDiv)) #%>% 
+  #mutate(SubDiv = factor(SubDiv))
 
 # Check to make sure it's correct. Plot and color by SubDiv
 df_full %>%
@@ -1238,28 +1238,23 @@ Now create a new sub-area that matches the benthic data. This is semi-arbitrary,
 
 ```{r add new sub-area, message=FALSE}
 # Now do a manual area, similar to sub divisions
-full_dat$sub_area <- "2"
+full_dat$sub_area <- as.numeric(full_dat$SubDiv)
+
+unique(full_dat$sub_area)
 
 # Now modify them...
-full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat > 55.45 & Long < 14.2, "2", sub_area))
-full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat < 55.5 & Long > 14.3, "2", sub_area))
-full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat > 56.15, "3", sub_area))
-full_dat <- full_dat %>% mutate(sub_area = ifelse(Long > 17.55, "4", sub_area))
-full_dat <- full_dat %>% mutate(sub_area = ifelse(Lat > 57.4 & Long < 17.7 & sub_area == 4, "3", sub_area))
+full_dat <- full_dat %>%
+  mutate(sub_area = ifelse(Lat > 56.18 & Long < 18, 27, sub_area)) %>% 
+  mutate(sub_area = ifelse(Long > 17.6 & Lat >= 56.49, 28, sub_area)) %>% 
+  mutate(sub_area = ifelse(Long > 17 & Lat < 56.49, 26, sub_area))
 
-# This would be an offshore area that doesn't exist in the benthic data really
-full_dat <- full_dat %>% mutate(sub_area = ifelse(Long > 17.45 & Lat < 56.5, "5", sub_area))
-
-# Specify map ranges
-# ymin = 55; ymax = 58; xmin = 9.5; xmax = 20
 ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
 
-ggplot(full_dat, aes(x = Long, y = Lat, color = sub_area)) +
-  geom_point() +
+ggplot(full_dat, aes(x = Long, y = Lat, color = factor(sub_area))) +
+  geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
-  scale_color_brewer(palette = "Dark2") +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
   theme_classic(base_size = 20) +
   NULL
 

@@ -256,511 +256,497 @@ dat <- dat %>%
 Add in oceanographic variables. Start with oxygen
 
 ```{r oxygen, message=FALSE, results="hide"}
-# Oxygen 
-# Loop through each year and extract the oxygen levels
-# Downloaded from here: https://resources.marine.copernicus.eu/?option=com_csw&view=details&product_id=BALTICSEA_REANALYSIS_BIO_003_012
-# Extract raster points: https://gisday.wordpress.com/2014/03/24/extract-raster-values-from-points-using-r/comment-page-1/
-# https://rpubs.com/boyerag/297592
-# https://pjbartlein.github.io/REarthSysSci/netCDF.html#get-a-variable
-# Open the netCDF file
-ncin <- nc_open("data/NEMO_Nordic_SCOBI/dataset-reanalysis-scobi-monthlymeans_1610091357600.nc")
-
-print(ncin)
-
-# Get longitude and latitude
-lon <- ncvar_get(ncin,"longitude")
-nlon <- dim(lon)
-head(lon)
-
-lat <- ncvar_get(ncin,"latitude")
-nlat <- dim(lat)
-head(lat)
-
-# Get time
-time <- ncvar_get(ncin,"time")
-time
-
-tunits <- ncatt_get(ncin,"time","units")
-nt <- dim(time)
-nt
-tunits
-
-# Get oxygen
-dname <- "o2b"
-
-oxy_array <- ncvar_get(ncin,dname)
-dlname <- ncatt_get(ncin,dname,"long_name")
-dunits <- ncatt_get(ncin,dname,"units")
-fillvalue <- ncatt_get(ncin,dname,"_FillValue")
-dim(oxy_array)
-
-# Get global attributes
-title <- ncatt_get(ncin,0,"title")
-institution <- ncatt_get(ncin,0,"institution")
-datasource <- ncatt_get(ncin,0,"source")
-references <- ncatt_get(ncin,0,"references")
-history <- ncatt_get(ncin,0,"history")
-Conventions <- ncatt_get(ncin,0,"Conventions")
-
-# Convert time: split the time units string into fields
-tustr <- strsplit(tunits$value, " ")
-tdstr <- strsplit(unlist(tustr)[3], "-")
-tmonth <- as.integer(unlist(tdstr)[2])
-tday <- as.integer(unlist(tdstr)[3])
-tyear <- as.integer(unlist(tdstr)[1])
-
-# Here I deviate from the guide a little bit. Save this info:
-dates <- chron(time, origin = c(tmonth, tday, tyear))
-
-# Crop the date variable
-months <- as.numeric(substr(dates, 2, 3))
-years <- as.numeric(substr(dates, 8, 9))
-years <- ifelse(years > 90, 1900 + years, 2000 + years)
-
-# Replace netCDF fill values with NA's
-oxy_array[oxy_array == fillvalue$value] <- NA
-
-# We only use Months 4-6 (quarter 2) in this analysis, so now we want to loop through each time step,
-# and if it is a good month save it as a raster.
-# First get the index of months that correspond to Q4
-months
-
-index_keep <- which(months > 3 & months < 7)
-
-# Quarter 2 by keeping months in index_keep
-oxy_q2 <- oxy_array[, , index_keep]
-
-months_keep <- months[index_keep]
-
-years_keep <- years[index_keep]
-
-# Now we have an array with only Q2 data...
-# We need to now calculate the average within a year.
-# Get a sequence that takes every third value between 1: number of months (length)
-loop_seq <- seq(1, dim(oxy_q2)[3], by = 3)
-
-# Create objects that will hold data
-dlist <- list()
-oxy_4 <- c()
-oxy_5 <- c()
-oxy_6 <- c()
-oxy_ave <- c()
-
-# Loop through the vector sequence with every third value, then take the average of
-# three consecutive months (i.e. q2)
-for(i in loop_seq) {
-  
-  oxy_4 <- oxy_q2[, , (i)]
-  oxy_5 <- oxy_q2[, , (i + 1)]
-  oxy_6 <- oxy_q2[, , (i + 2)]
-  
-  oxy_ave <- (oxy_4 + oxy_5 + oxy_6) / 3
-  
-  list_pos <- ((i/3) - (1/3)) + 1 # to get index 1:n(years)
-  
-  dlist[[list_pos]] <- oxy_ave
-  
-}
-
-# Now name the lists with the year:
-# First rename some variables
-dat$year <- dat$artal
-dat$lat <- dat$Latitud
-dat$lon <- dat$Longitud
-
-names(dlist) <- unique(years_keep)
-
-# Now I need to make a loop where I extract the raster value for each year...
-
-# Filter years in the benthic data frame to only have the years I have oxygen for
-d_sub_oxy <- dat %>% filter(year %in% names(dlist)) %>% droplevels()
-
-# Now keep only the unique combinations of lat lon and year
-d_sub_oxy <- d_sub_oxy %>% mutate(id_oxy = paste(lat, lon, year)) %>% distinct(id_oxy, .keep_all = TRUE)
-
-# Create data holding object
-data_list <- list()
-
-# Create factor year for indexing the list in the loop
-d_sub_oxy$year_f <- as.factor(d_sub_oxy$year)
-
-# Loop through each year and extract raster values for the pred grid data points
-for(i in unique(d_sub_oxy$year_f)) {
-  
-  # Subset a year
-  oxy_slice <- dlist[[i]]
-  
-  # Create raster for that year (i)
-  r <- raster(t(oxy_slice), xmn = min(lon), xmx = max(lon), ymn = min(lat), ymx = max(lat),
-              crs = CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
-  
-  # Flip...
-  r <- flip(r, direction = 'y')
-  
-  plot(r, main = i)
-  
-  # Filter the same year (i) in the pred-grid data and select only coordinates
-  d_slice <- d_sub_oxy %>% filter(year_f == i) %>% dplyr::select(lon, lat)
-  
-  # Make into a SpatialPoints object
-  data_sp <- SpatialPoints(d_slice)
-  
-  # Extract raster value (oxygen)
-  rasValue <- raster::extract(r, data_sp)
-  
-  # Now we want to plot the results of the raster extractions by plotting the pred-grid
-  # data points over a raster and saving it for each year.
-  # Make the SpatialPoints object into a raster again (for pl)
-  df <- as.data.frame(data_sp)
-  
-  # Add in the raster value in the df holding the coordinates for the pred-grid data
-  d_slice$oxy <- rasValue
-  
-  # Add in which year
-  d_slice$year <- i
-  
-  # Create a index for the data last where we store all years (because our loop index
-  # i is not continuous, we can't use it directly)
-  index <- as.numeric(d_slice$year)[1] - 1992
-  
-  # Add each years' data in the list
-  data_list[[index]] <- d_slice
-  
-}
-
-# Now create a data frame from the list of all annual values
-pred_grid_oxy <- dplyr::bind_rows(data_list)
-
-lims <- pred_grid_oxy %>% drop_na(oxy) %>% summarise(min = min(oxy),
-                                                     max = max(oxy))
-
-# Plot and compare with rasters
-ggplot(pred_grid_oxy, aes(lon, lat, color = oxy)) + 
-  facet_wrap(~year) +
-  scale_colour_gradientn(colours = rev(terrain.colors(10)),
-                         limits = c(lims$min, lims$max)) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
-  geom_point(size = 0.1) +
-  NULL
-  
-# Left join in with the benthic again
-# First make the same selection of years in pred-grid 2
-# sort(unique(dat$year))
-
-pred_grid_oxy <- pred_grid_oxy %>% mutate(id_oxy = paste(year, lon, lat)) %>% dplyr::select(-year, -lon, -lat)
-
-dat <- dat %>% mutate(id_oxy = paste(year, lon, lat))
-
-# Add in oxygen
-nrow(dat)
-dat <- left_join(dat, pred_grid_oxy)
-nrow(dat)
-     
-ggplot(dat, aes(lon, lat, color = oxy)) + 
-  facet_wrap(~year) +
-  scale_colour_gradientn(colours = rev(terrain.colors(10)),
-                         limits = c(lims$min, lims$max)) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
-  geom_point(size = 0.1) +
-  NULL
+# # Oxygen 
+# # Loop through each year and extract the oxygen levels
+# # Downloaded from here: https://resources.marine.copernicus.eu/?option=com_csw&view=details&product_id=BALTICSEA_REANALYSIS_BIO_003_012
+# # Extract raster points: https://gisday.wordpress.com/2014/03/24/extract-raster-values-from-points-using-r/comment-page-1/
+# # https://rpubs.com/boyerag/297592
+# # https://pjbartlein.github.io/REarthSysSci/netCDF.html#get-a-variable
+# # Open the netCDF file
+# ncin <- nc_open("data/NEMO_Nordic_SCOBI/dataset-reanalysis-scobi-monthlymeans_1610091357600.nc")
+# 
+# print(ncin)
+# 
+# # Get longitude and latitude
+# lon <- ncvar_get(ncin,"longitude")
+# nlon <- dim(lon)
+# head(lon)
+# 
+# lat <- ncvar_get(ncin,"latitude")
+# nlat <- dim(lat)
+# head(lat)
+# 
+# # Get time
+# time <- ncvar_get(ncin,"time")
+# time
+# 
+# tunits <- ncatt_get(ncin,"time","units")
+# nt <- dim(time)
+# nt
+# tunits
+# 
+# # Get oxygen
+# dname <- "o2b"
+# 
+# oxy_array <- ncvar_get(ncin,dname)
+# dlname <- ncatt_get(ncin,dname,"long_name")
+# dunits <- ncatt_get(ncin,dname,"units")
+# fillvalue <- ncatt_get(ncin,dname,"_FillValue")
+# dim(oxy_array)
+# 
+# # Get global attributes
+# title <- ncatt_get(ncin,0,"title")
+# institution <- ncatt_get(ncin,0,"institution")
+# datasource <- ncatt_get(ncin,0,"source")
+# references <- ncatt_get(ncin,0,"references")
+# history <- ncatt_get(ncin,0,"history")
+# Conventions <- ncatt_get(ncin,0,"Conventions")
+# 
+# # Convert time: split the time units string into fields
+# tustr <- strsplit(tunits$value, " ")
+# tdstr <- strsplit(unlist(tustr)[3], "-")
+# tmonth <- as.integer(unlist(tdstr)[2])
+# tday <- as.integer(unlist(tdstr)[3])
+# tyear <- as.integer(unlist(tdstr)[1])
+# 
+# # Here I deviate from the guide a little bit. Save this info:
+# dates <- chron(time, origin = c(tmonth, tday, tyear))
+# 
+# # Crop the date variable
+# months <- as.numeric(substr(dates, 2, 3))
+# years <- as.numeric(substr(dates, 8, 9))
+# years <- ifelse(years > 90, 1900 + years, 2000 + years)
+# 
+# # Replace netCDF fill values with NA's
+# oxy_array[oxy_array == fillvalue$value] <- NA
+# 
+# # We only use Months 4-6 (quarter 2) in this analysis, so now we want to loop through each time step,
+# # and if it is a good month save it as a raster.
+# # First get the index of months that correspond to Q4
+# months
+# 
+# index_keep <- which(months > 3 & months < 7)
+# 
+# # Quarter 2 by keeping months in index_keep
+# oxy_q2 <- oxy_array[, , index_keep]
+# 
+# months_keep <- months[index_keep]
+# 
+# years_keep <- years[index_keep]
+# 
+# # Now we have an array with only Q2 data...
+# # We need to now calculate the average within a year.
+# # Get a sequence that takes every third value between 1: number of months (length)
+# loop_seq <- seq(1, dim(oxy_q2)[3], by = 3)
+# 
+# # Create objects that will hold data
+# dlist <- list()
+# oxy_4 <- c()
+# oxy_5 <- c()
+# oxy_6 <- c()
+# oxy_ave <- c()
+# 
+# # Loop through the vector sequence with every third value, then take the average of
+# # three consecutive months (i.e. q2)
+# for(i in loop_seq) {
+#   
+#   oxy_4 <- oxy_q2[, , (i)]
+#   oxy_5 <- oxy_q2[, , (i + 1)]
+#   oxy_6 <- oxy_q2[, , (i + 2)]
+#   
+#   oxy_ave <- (oxy_4 + oxy_5 + oxy_6) / 3
+#   
+#   list_pos <- ((i/3) - (1/3)) + 1 # to get index 1:n(years)
+#   
+#   dlist[[list_pos]] <- oxy_ave
+#   
+# }
+# 
+# # Now name the lists with the year:
+# # First rename some variables
+# dat$year <- dat$artal
+# dat$lat <- dat$Latitud
+# dat$lon <- dat$Longitud
+# 
+# names(dlist) <- unique(years_keep)
+# 
+# # Now I need to make a loop where I extract the raster value for each year...
+# 
+# # Filter years in the benthic data frame to only have the years I have oxygen for
+# d_sub_oxy <- dat %>% filter(year %in% names(dlist)) %>% droplevels()
+# 
+# # Now keep only the unique combinations of lat lon and year
+# d_sub_oxy <- d_sub_oxy %>% mutate(id_oxy = paste(lat, lon, year)) %>% distinct(id_oxy, .keep_all = TRUE)
+# 
+# # Create data holding object
+# data_list <- list()
+# 
+# # Create factor year for indexing the list in the loop
+# d_sub_oxy$year_f <- as.factor(d_sub_oxy$year)
+# 
+# # Loop through each year and extract raster values for the pred grid data points
+# for(i in unique(d_sub_oxy$year_f)) {
+#   
+#   # Subset a year
+#   oxy_slice <- dlist[[i]]
+#   
+#   # Create raster for that year (i)
+#   r <- raster(t(oxy_slice), xmn = min(lon), xmx = max(lon), ymn = min(lat), ymx = max(lat),
+#               crs = CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
+#   
+#   # Flip...
+#   r <- flip(r, direction = 'y')
+#   
+#   plot(r, main = i)
+#   
+#   # Filter the same year (i) in the pred-grid data and select only coordinates
+#   d_slice <- d_sub_oxy %>% filter(year_f == i) %>% dplyr::select(lon, lat)
+#   
+#   # Make into a SpatialPoints object
+#   data_sp <- SpatialPoints(d_slice)
+#   
+#   # Extract raster value (oxygen)
+#   rasValue <- raster::extract(r, data_sp)
+#   
+#   # Now we want to plot the results of the raster extractions by plotting the pred-grid
+#   # data points over a raster and saving it for each year.
+#   # Make the SpatialPoints object into a raster again (for pl)
+#   df <- as.data.frame(data_sp)
+#   
+#   # Add in the raster value in the df holding the coordinates for the pred-grid data
+#   d_slice$oxy <- rasValue
+#   
+#   # Add in which year
+#   d_slice$year <- i
+#   
+#   # Create a index for the data last where we store all years (because our loop index
+#   # i is not continuous, we can't use it directly)
+#   index <- as.numeric(d_slice$year)[1] - 1992
+#   
+#   # Add each years' data in the list
+#   data_list[[index]] <- d_slice
+#   
+# }
+# 
+# # Now create a data frame from the list of all annual values
+# pred_grid_oxy <- dplyr::bind_rows(data_list)
+# 
+# lims <- pred_grid_oxy %>% drop_na(oxy) %>% summarise(min = min(oxy),
+#                                                      max = max(oxy))
+# 
+# # Plot and compare with rasters
+# ggplot(pred_grid_oxy, aes(lon, lat, color = oxy)) + 
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
+#   
+# # Left join in with the benthic again
+# # First make the same selection of years in pred-grid 2
+# # sort(unique(dat$year))
+# 
+# pred_grid_oxy <- pred_grid_oxy %>% mutate(id_oxy = paste(year, lon, lat)) %>% dplyr::select(-year, -lon, -lat)
+# 
+# dat <- dat %>% mutate(id_oxy = paste(year, lon, lat))
+# 
+# # Add in oxygen
+# nrow(dat)
+# dat <- left_join(dat, pred_grid_oxy)
+# nrow(dat)
+#      
+# ggplot(dat, aes(lon, lat, color = oxy)) + 
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
 ```
 
 Now do temperature
 
 ```{r temperature, message=FALSE, results="hide"}
-# Open the netCDF file
-ncin <- nc_open("data/NEMO_Nordic_SCOBI/dataset-reanalysis-nemo-monthlymeans_1608127623694.nc")
-
-print(ncin)
-
-# Get longitude and latitude
-lon <- ncvar_get(ncin,"longitude")
-nlon <- dim(lon)
-head(lon)
-
-lat <- ncvar_get(ncin,"latitude")
-nlat <- dim(lat)
-head(lat)
-
-# Get time
-time <- ncvar_get(ncin,"time")
-time
-
-tunits <- ncatt_get(ncin,"time","units")
-nt <- dim(time)
-nt
-tunits
-
-# Get temperature
-dname <- "bottomT"
-
-temp_array <- ncvar_get(ncin,dname)
-dlname <- ncatt_get(ncin,dname,"long_name")
-dunits <- ncatt_get(ncin,dname,"units")
-fillvalue <- ncatt_get(ncin,dname,"_FillValue")
-dim(temp_array)
-
-# Get global attributes
-title <- ncatt_get(ncin,0,"title")
-institution <- ncatt_get(ncin,0,"institution")
-datasource <- ncatt_get(ncin,0,"source")
-references <- ncatt_get(ncin,0,"references")
-history <- ncatt_get(ncin,0,"history")
-Conventions <- ncatt_get(ncin,0,"Conventions")
-
-# Convert time: split the time units string into fields
-tustr <- strsplit(tunits$value, " ")
-tdstr <- strsplit(unlist(tustr)[3], "-")
-tmonth <- as.integer(unlist(tdstr)[2])
-tday <- as.integer(unlist(tdstr)[3])
-tyear <- as.integer(unlist(tdstr)[1])
-
-# Here I deviate from the guide a little bit. Save this info:
-dates <- chron(time, origin = c(tmonth, tday, tyear))
-
-# Crop the date variable
-months <- as.numeric(substr(dates, 2, 3))
-years <- as.numeric(substr(dates, 8, 9))
-years <- ifelse(years > 90, 1900 + years, 2000 + years)
-
-# Replace netCDF fill values with NA's
-temp_array[temp_array == fillvalue$value] <- NA
-
-# We only use Quarter 2 in this analysis, so now we want to loop through each time step,
-# and if it is a good month save it as a raster.
-# First get the index of months that correspond to Q2
-months
-
-index_keep <- which(months > 3 & months < 7)
-
-# Quarter 2 by keeping months in index_keep
-temp_q2 <- temp_array[, , index_keep]
-
-months_keep <- months[index_keep]
-
-years_keep <- years[index_keep]
-
-# Now we have an array with only Q2 data...
-# We need to now calculate the average within a year.
-# Get a sequence that takes every third value between 1: number of months (length)
-loop_seq <- seq(1, dim(temp_q2)[3], by = 3)
-
-# Create objects that will hold data
-dlist <- list()
-temp_4 <- c()
-temp_5 <- c()
-temp_6 <- c()
-temp_ave <- c()
-
-# Loop through the vector sequence with every third value, then take the average of
-# three consecutive months (i.e. q2)
-for(i in loop_seq) {
-  
-  temp_4<- temp_q2[, , (i)]
-  temp_5 <- temp_q2[, , (i + 1)]
-  temp_6 <- temp_q2[, , (i + 2)]
-  
-  temp_ave <- (temp_4 + temp_5 + temp_6) / 3
-  
-  list_pos <- ((i/3) - (1/3)) + 1 # to get index 1:n(years)
-  
-  dlist[[list_pos]] <- temp_ave
-  
-}
-
-# Now name the lists with the year:
-names(dlist) <- unique(years_keep)
-
-# Filter years in the pred-grid data frame to only have the years I have temperature for
-d_sub_temp <- dat %>% filter(year %in% names(dlist)) %>% droplevels()
-
-# Now keep only the unique combinations of lat lon and year
-d_sub_temp <- d_sub_temp %>% mutate(id_temp = paste(lat, lon, year)) %>% distinct(id_temp, .keep_all = TRUE)
-
-# Create data holding object
-data_list <- list()
-
-# Create factor year for indexing the list in the loop
-d_sub_temp$year_f <- as.factor(d_sub_temp$year)
-
-# Loop through each year and extract raster values for the pred-grid data points
-for(i in unique(d_sub_temp$year_f)) {
-  
-  # Subset a year
-  temp_slice <- dlist[[i]]
-  
-  # Create raster for that year (i)
-  r <- raster(t(temp_slice), xmn = min(lon), xmx = max(lon), ymn = min(lat), ymx = max(lat),
-              crs = CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
-  
-  # Flip...
-  r <- flip(r, direction = 'y')
-  
-  plot(r, main = i)
-  
-  # Filter the same year (i) in the pred-grid data and select only coordinates
-  d_slice <- d_sub_temp %>% filter(year_f == i) %>% dplyr::select(lon, lat)
-  
-  # Make into a SpatialPoints object
-  data_sp <- SpatialPoints(d_slice)
-  
-  # Extract raster value (temperature)
-  rasValue <- raster::extract(r, data_sp)
-  
-  # Now we want to plot the results of the raster extractions by plotting the pred-grid
-  # data points over a raster and saving it for each year.
-  # Make the SpatialPoints object into a raster again (for pl)
-  df <- as.data.frame(data_sp)
-  
-  # Add in the raster value in the df holding the coordinates for the pred-grid data
-  d_slice$temp <- rasValue
-  
-  # Add in which year
-  d_slice$year <- i
-  
-  # Create a index for the data last where we store all years (because our loop index
-  # i is not continuous, we can't use it directly)
-  index <- as.numeric(d_slice$year)[1] - 1992
-  
-  # Add each years' data in the list
-  data_list[[index]] <- d_slice
-  
-}
-
-# Now create a data frame from the list of all annual values
-pred_grid_temp <- dplyr::bind_rows(data_list)
-
-lims <- pred_grid_temp %>% drop_na(temp) %>% summarise(min = min(temp),
-                                                       max = max(temp))
-
-# Plot and compare with rasters
-ggplot(pred_grid_temp, aes(lon, lat, color = temp)) +
-  facet_wrap(~year) +
-  scale_colour_gradientn(colours = rev(terrain.colors(10)),
-                         limits = c(lims$min, lims$max)) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
-  geom_point(size = 0.1) +
-  NULL
-
-# Left join in with the benthic again
-# First make the same selection of years in pred-grid 2
-# sort(unique(dat$year))
-
-pred_grid_temp <- pred_grid_temp %>% mutate(id_temp = paste(year, lon, lat)) %>% dplyr::select(-year, -lon, -lat)
-
-dat <- dat %>% mutate(id_temp = paste(year, lon, lat))
-
-# left_join in temperature
-nrow(dat)
-dat <- left_join(dat, pred_grid_temp)
-nrow(dat)
-
-ggplot(dat, aes(lon, lat, color = temp)) +
-  facet_wrap(~year) +
-  scale_colour_gradientn(colours = rev(terrain.colors(10)),
-                         limits = c(lims$min, lims$max)) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
-  geom_point(size = 0.1) +
-  NULL
+# # Open the netCDF file
+# ncin <- nc_open("data/NEMO_Nordic_SCOBI/dataset-reanalysis-nemo-monthlymeans_1608127623694.nc")
+# 
+# print(ncin)
+# 
+# # Get longitude and latitude
+# lon <- ncvar_get(ncin,"longitude")
+# nlon <- dim(lon)
+# head(lon)
+# 
+# lat <- ncvar_get(ncin,"latitude")
+# nlat <- dim(lat)
+# head(lat)
+# 
+# # Get time
+# time <- ncvar_get(ncin,"time")
+# time
+# 
+# tunits <- ncatt_get(ncin,"time","units")
+# nt <- dim(time)
+# nt
+# tunits
+# 
+# # Get temperature
+# dname <- "bottomT"
+# 
+# temp_array <- ncvar_get(ncin,dname)
+# dlname <- ncatt_get(ncin,dname,"long_name")
+# dunits <- ncatt_get(ncin,dname,"units")
+# fillvalue <- ncatt_get(ncin,dname,"_FillValue")
+# dim(temp_array)
+# 
+# # Get global attributes
+# title <- ncatt_get(ncin,0,"title")
+# institution <- ncatt_get(ncin,0,"institution")
+# datasource <- ncatt_get(ncin,0,"source")
+# references <- ncatt_get(ncin,0,"references")
+# history <- ncatt_get(ncin,0,"history")
+# Conventions <- ncatt_get(ncin,0,"Conventions")
+# 
+# # Convert time: split the time units string into fields
+# tustr <- strsplit(tunits$value, " ")
+# tdstr <- strsplit(unlist(tustr)[3], "-")
+# tmonth <- as.integer(unlist(tdstr)[2])
+# tday <- as.integer(unlist(tdstr)[3])
+# tyear <- as.integer(unlist(tdstr)[1])
+# 
+# # Here I deviate from the guide a little bit. Save this info:
+# dates <- chron(time, origin = c(tmonth, tday, tyear))
+# 
+# # Crop the date variable
+# months <- as.numeric(substr(dates, 2, 3))
+# years <- as.numeric(substr(dates, 8, 9))
+# years <- ifelse(years > 90, 1900 + years, 2000 + years)
+# 
+# # Replace netCDF fill values with NA's
+# temp_array[temp_array == fillvalue$value] <- NA
+# 
+# # We only use Quarter 2 in this analysis, so now we want to loop through each time step,
+# # and if it is a good month save it as a raster.
+# # First get the index of months that correspond to Q2
+# months
+# 
+# index_keep <- which(months > 3 & months < 7)
+# 
+# # Quarter 2 by keeping months in index_keep
+# temp_q2 <- temp_array[, , index_keep]
+# 
+# months_keep <- months[index_keep]
+# 
+# years_keep <- years[index_keep]
+# 
+# # Now we have an array with only Q2 data...
+# # We need to now calculate the average within a year.
+# # Get a sequence that takes every third value between 1: number of months (length)
+# loop_seq <- seq(1, dim(temp_q2)[3], by = 3)
+# 
+# # Create objects that will hold data
+# dlist <- list()
+# temp_4 <- c()
+# temp_5 <- c()
+# temp_6 <- c()
+# temp_ave <- c()
+# 
+# # Loop through the vector sequence with every third value, then take the average of
+# # three consecutive months (i.e. q2)
+# for(i in loop_seq) {
+#   
+#   temp_4<- temp_q2[, , (i)]
+#   temp_5 <- temp_q2[, , (i + 1)]
+#   temp_6 <- temp_q2[, , (i + 2)]
+#   
+#   temp_ave <- (temp_4 + temp_5 + temp_6) / 3
+#   
+#   list_pos <- ((i/3) - (1/3)) + 1 # to get index 1:n(years)
+#   
+#   dlist[[list_pos]] <- temp_ave
+#   
+# }
+# 
+# # Now name the lists with the year:
+# names(dlist) <- unique(years_keep)
+# 
+# # Filter years in the pred-grid data frame to only have the years I have temperature for
+# d_sub_temp <- dat %>% filter(year %in% names(dlist)) %>% droplevels()
+# 
+# # Now keep only the unique combinations of lat lon and year
+# d_sub_temp <- d_sub_temp %>% mutate(id_temp = paste(lat, lon, year)) %>% distinct(id_temp, .keep_all = TRUE)
+# 
+# # Create data holding object
+# data_list <- list()
+# 
+# # Create factor year for indexing the list in the loop
+# d_sub_temp$year_f <- as.factor(d_sub_temp$year)
+# 
+# # Loop through each year and extract raster values for the pred-grid data points
+# for(i in unique(d_sub_temp$year_f)) {
+#   
+#   # Subset a year
+#   temp_slice <- dlist[[i]]
+#   
+#   # Create raster for that year (i)
+#   r <- raster(t(temp_slice), xmn = min(lon), xmx = max(lon), ymn = min(lat), ymx = max(lat),
+#               crs = CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
+#   
+#   # Flip...
+#   r <- flip(r, direction = 'y')
+#   
+#   plot(r, main = i)
+#   
+#   # Filter the same year (i) in the pred-grid data and select only coordinates
+#   d_slice <- d_sub_temp %>% filter(year_f == i) %>% dplyr::select(lon, lat)
+#   
+#   # Make into a SpatialPoints object
+#   data_sp <- SpatialPoints(d_slice)
+#   
+#   # Extract raster value (temperature)
+#   rasValue <- raster::extract(r, data_sp)
+#   
+#   # Now we want to plot the results of the raster extractions by plotting the pred-grid
+#   # data points over a raster and saving it for each year.
+#   # Make the SpatialPoints object into a raster again (for pl)
+#   df <- as.data.frame(data_sp)
+#   
+#   # Add in the raster value in the df holding the coordinates for the pred-grid data
+#   d_slice$temp <- rasValue
+#   
+#   # Add in which year
+#   d_slice$year <- i
+#   
+#   # Create a index for the data last where we store all years (because our loop index
+#   # i is not continuous, we can't use it directly)
+#   index <- as.numeric(d_slice$year)[1] - 1992
+#   
+#   # Add each years' data in the list
+#   data_list[[index]] <- d_slice
+#   
+# }
+# 
+# # Now create a data frame from the list of all annual values
+# pred_grid_temp <- dplyr::bind_rows(data_list)
+# 
+# lims <- pred_grid_temp %>% drop_na(temp) %>% summarise(min = min(temp),
+#                                                        max = max(temp))
+# 
+# # Plot and compare with rasters
+# ggplot(pred_grid_temp, aes(lon, lat, color = temp)) +
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
+# 
+# # Left join in with the benthic again
+# # First make the same selection of years in pred-grid 2
+# # sort(unique(dat$year))
+# 
+# pred_grid_temp <- pred_grid_temp %>% mutate(id_temp = paste(year, lon, lat)) %>% dplyr::select(-year, -lon, -lat)
+# 
+# dat <- dat %>% mutate(id_temp = paste(year, lon, lat))
+# 
+# # left_join in temperature
+# nrow(dat)
+# dat <- left_join(dat, pred_grid_temp)
+# nrow(dat)
+# 
+# ggplot(dat, aes(lon, lat, color = temp)) +
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
 ```
 
-(Lastly, add in ICES areas information*)
-Not needed! We use this info in the prediction grid.
+Add in ICES areas information
 
 ```{r add ICES areas, message=FALSE, results="hide"}
-# # Now plot the data points and colour according to ICES rectangle
-# dat$ices_rect <- dat(lon = dat$lon, lat = dat$lat)
-# 
-# colourCount = length(unique(dat$ices_rect))
-# getPalette = colorRampPalette(brewer.pal(9, "Dark2"))
-# 
-# ggplot(dat, aes(x = lon, y = lat, color = ices_rect)) +
-#   geom_point() +
-#   #scale_color_brewer(palette = "Dark2") +
-#   scale_color_manual(values = getPalette(colourCount)) +
-#   geom_sf(data = world, inherit.aes = F, size = 0.2) +
-#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-#   theme_classic(base_size = 20) +
-#   NULL
-# 
-# # Color according to sub-division
-# dat <- dat %>% 
-#   mutate(SubDiv = NA) %>% 
-#   mutate(SubDiv = ifelse(ices_rect %in% c("37G0", "37G1",
-#                                           "38G0", "38G1", 
-#                                           "39F9", "39G0", "39G1",
-#                                           "40F9", "40G0", "40G1"), "22", SubDiv)) %>% 
-#   mutate(SubDiv = ifelse(ices_rect == "40G2", "23", SubDiv)) %>% 
-#   mutate(SubDiv = ifelse(ices_rect %in% c("37G2", "37G3", "37G4",
-#                                           "38G1", "38G2", "38G3", "38G4", 
-#                                           "39G1", "39G2", "39G3", "39G4",
-#                                           "40G1"), "24", SubDiv)) %>% 
-#   mutate(SubDiv = ifelse(ices_rect %in% c("40G4",
-#                                           "37G5", "37G6", "37G7",
-#                                           "38G5", "38G6", "38G7",
-#                                           "39G5", "39G6", "39G7",
-#                                           "40G5", "40G6", "40G7",
-#                                           "41G5", "41G6", "41G7"), "25", SubDiv)) %>% 
-#   mutate(SubDiv = ifelse(ices_rect %in% c("37G8", "37G9", "37H0",
-#                                           "38G8", "38G9", "38H0",
-#                                           "39G8", "39G9", "39H0",
-#                                           "40G8", "40G9", "40H0",
-#                                           "41G8", "41G9", "41H0"), "26", SubDiv)) %>% 
-#   mutate(SubDiv = ifelse(ices_rect %in% c("42G6", "42G7",
-#                                           "43G6", "43G7",
-#                                           "44G6", "44G7", "44G8"), "27", SubDiv)) %>% 
-#   mutate(SubDiv = ifelse(ices_rect %in% c("42G8", "42G9", "42H0", "42H1", "42H2",
-#                                           "43G8", "43G9", "43H0", "43H1", "43H2",
-#                                           "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
-#   mutate(SubDiv = ifelse(lat > 58.5 & lon > 19, "29", SubDiv)) %>%
-#   mutate(SubDiv = ifelse(lat > 57 & lat < 58.5 & lon > 19 & lon < 22, "28", SubDiv)) %>%
-#   mutate(SubDiv = ifelse(lat > 57 & lat < 60 & lon > 16 & lon < 18, "27", SubDiv)) %>%
-#   mutate(SubDiv = ifelse(lat > 55.5 & lat < 56.5 & lon > 14 & lon < 16, "25", SubDiv)) %>% 
-#   mutate(SubDiv = factor(SubDiv))
-# 
-# #dat <- dat %>% drop_na(SubDiv) 
-# 
-# ggplot(dat, aes(x = lon, y = lat, color = SubDiv)) +
-#   geom_point() +
-#   coord_cartesian(expand = 0) +
-#   scale_color_brewer(palette = "Dark2") +
-#   geom_sf(data = world, inherit.aes = F, size = 0.2) +
-#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-#   theme_classic(base_size = 20) +
-#   geom_point(data = d, aes(Longitud, Latitud), inherit.aes = FALSE, color = "black", size = 0.2) + # add data! 
-#   NULL
-# 
-# # Now do a manual area, similar to sub divisions
-# dat$sub_area <- dat$SubDiv
-# 
-# dat <- dat %>% mutate(sub_area = fct_recode(sub_area,
-#                                             "1" = "24",
-#                                             "2" = "25",
-#                                             "3" = "27",
-#                                             "4" = "28"))
-# 
-# # Now modify them...
-# dat <- dat %>% mutate(sub_area = ifelse(lat > 56.15 & sub_area == 2, "3", sub_area))
-# dat <- dat %>% mutate(sub_area = ifelse(lon > 17.55 & sub_area == 3, "4", sub_area))
-# dat <- dat %>% mutate(sub_area = ifelse(lat > 57.4 & lon < 17.7 & sub_area == 4, "3", sub_area))
-# dat <- dat %>% mutate(sub_area = ifelse(lat > 55.5 & sub_area == 1, "2", sub_area))
-# dat <- dat %>% mutate(sub_area = ifelse(lat < 55.5 & lon > 14.3, "2", sub_area))
-# 
-# ggplot(dat, aes(x = lon, y = lat, color = sub_area)) +
-#   geom_point(size = 0.5) +
-#   coord_cartesian(expand = 0) +
-#   scale_color_brewer(palette = "Dark2") +
-#   geom_sf(data = world, inherit.aes = F, size = 0.2) +
-#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-#   theme_classic(base_size = 20) +
-#   geom_point(data = d, aes(Longitud, Latitud), inherit.aes = FALSE, color = "black", size = 0.2) + # add data! 
-#   NULL
-# 
-# ggsave("figures/sub_areas_predgrid.png", width = 9, height = 9, dpi = 600)
+# Get ICES rect
+dat$ices_rect <- ices.rect2(lon = dat$Longitud, lat = dat$Latitud)
+
+ggplot(dat, aes(x = Longitud, y = Latitud, color = ices_rect)) +
+  geom_point() +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = xlim, ylim = ylim) +
+  theme_classic(base_size = 20) +
+  NULL
+
+# Color according to sub-division
+dat <- dat %>%
+  mutate(SubDiv = NA) %>%
+  mutate(SubDiv = ifelse(ices_rect %in% c("37G0", "37G1",
+                                          "38G0", "38G1",
+                                          "39F9", "39G0", "39G1",
+                                          "40F9", "40G0", "40G1"), "22", SubDiv)) %>%
+  mutate(SubDiv = ifelse(ices_rect == "40G2", "23", SubDiv)) %>%
+  mutate(SubDiv = ifelse(ices_rect %in% c("37G2", "37G3", "37G4",
+                                          "38G1", "38G2", "38G3", "38G4",
+                                          "39G1", "39G2", "39G3", "39G4",
+                                          "40G1"), "24", SubDiv)) %>%
+  mutate(SubDiv = ifelse(ices_rect %in% c("40G4",
+                                          "37G5", "37G6", "37G7",
+                                          "38G5", "38G6", "38G7",
+                                          "39G5", "39G6", "39G7",
+                                          "40G5", "40G6", "40G7",
+                                          "41G5", "41G6", "41G7"), "25", SubDiv)) %>%
+  mutate(SubDiv = ifelse(ices_rect %in% c("37G8", "37G9", "37H0",
+                                          "38G8", "38G9", "38H0",
+                                          "39G8", "39G9", "39H0",
+                                          "40G8", "40G9", "40H0",
+                                          "41G8", "41G9", "41H0"), "26", SubDiv)) %>%
+  mutate(SubDiv = ifelse(ices_rect %in% c("42G6", "42G7",
+                                          "43G6", "43G7",
+                                          "44G6", "44G7", "44G8"), "27", SubDiv)) %>%
+  mutate(SubDiv = ifelse(ices_rect %in% c("42G8", "42G9", "42H0", "42H1", "42H2",
+                                          "43G8", "43G9", "43H0", "43H1", "43H2",
+                                          "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Latitud > 58.5 & Longitud > 19, "29", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Latitud > 57 & Latitud < 58.5 & Longitud > 19 & Longitud < 22, "28", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Latitud > 57 & Latitud < 60 & Longitud > 16 & Longitud < 18, "27", SubDiv)) %>%
+  mutate(SubDiv = ifelse(Latitud > 55.5 & Latitud < 56.5 & Longitud > 14 & Longitud < 16, "25", SubDiv)) #%>%
+  #mutate(SubDiv = factor(SubDiv))
+
+ggplot(dat, aes(x = Longitud, y = Latitud, color = SubDiv)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  scale_color_brewer(palette = "Dark2") +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = xlim, ylim = ylim) +
+  theme_classic(base_size = 20) +
+  NULL
+
+# Now do a manual area, similar to sub divisions
+dat$sub_area <- as.numeric(dat$SubDiv)
+
+unique(dat$sub_area)
+
+# Now modify them...
+dat <- dat %>%
+  mutate(sub_area = ifelse(Latitud > 56.18 & Longitud < 18, 27, sub_area)) %>% 
+  mutate(sub_area = ifelse(Longitud > 17.6 & Latitud >= 56.49, 28, sub_area)) %>% 
+  mutate(sub_area = ifelse(Longitud > 17 & Latitud < 56.49, 26, sub_area))
+
+ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
+
+ggplot(dat, aes(x = Longitud, y = Latitud, color = factor(sub_area))) +
+  geom_point(size = 0.5) +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  theme_classic(base_size = 20) +
+  NULL
+
+ggsave("figures/sub_areas_benthicdata.png", width = 9, height = 9, dpi = 600)
 ```
 
 Now add in the species 
@@ -846,8 +832,11 @@ dat2 <- dat %>%
          "abundance" = "antal",
          "biomass" = "biomassa",
          "month" = "Month",
-         "day" = "Day") %>% 
-  dplyr::select(year, month, day, lon, lat, abundance, biomass, species_group, depth, oxy, temp, prov_nr, provID)
+         "day" = "Day",
+         "year" = "artal",
+         "lon" = "Longitud",
+         "lat" = "Latitud") %>% 
+  dplyr::select(year, month, day, lon, lat, abundance, biomass, species_group, depth, prov_nr, provID, sub_area, taxa)
 
 # Now we can save the data
 write.csv(dat2, "data/data_complete.csv")
