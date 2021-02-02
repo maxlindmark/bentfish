@@ -485,5 +485,21 @@ ggplot(bind_rows(p, d), aes(year, biomass, color = source)) +
 # Cumacea
 # Mysida
 
+# Merge data to a full index
+```{r merge all predictions}
+
+sad_preds <- sad_preds %>%
+  dplyr::select(year, sub_area, est_g_m2) %>% 
+  mutate(species_group = "Saduria entomon")
+
+amp_preds <- amp_preds %>%
+  dplyr::select(year, sub_area, est_g_m2) %>% 
+  mutate(species_group = "Amphipoda")
+
+# ...
+pred_dat <- bind_rows(sad_preds, amp_preds)
+
+write.csv(pred_dat, "output/benthic_indicies.csv")
+```
 
 
