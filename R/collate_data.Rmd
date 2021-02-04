@@ -1083,25 +1083,3 @@ dat %>%
     scale_color_brewer(palette = "Set2") +
     NULL
 ```
-
-Interesting!
-
-However, a proper index should be calculated to account for the
-spatiotemporal correlation structure of the residuals, and thus also the
-changes in sampling stations across years. And for the compound groups
-in particular, we should make sure that we measure the same species each
-year.
-
-So, which selections and group structure all boils down to the tradeoff
-between spatial, temporal and taxonomic resolution.
-
--   **Environmental variables**: Can be added either by using model
-    outputs from SMHI (available between 1993-2019) or by selecting
-    specific stations that are representative of the area (e.g. depth
-    stratified)
-
--   **Stomach data & individual-level biological data**: Adding newer
-    data is in progress - waiting for samples.
-
--   **Catch data (for index of abundance or density)**: Latest data can
-    be downloaded from DATRAS and matched to stomach data
