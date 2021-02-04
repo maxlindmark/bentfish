@@ -49,7 +49,7 @@ library(marmap)
 library(rnaturalearth)
 library(rnaturalearthdata)
 library(mapplots)
-library(qwraps2) # To load entire cache in interactive r session, do: qwraps2::lazyload_cache_dir(path = "saduria_index_cache/html")
+library(qwraps2) # To load entire cache in interactive r session, do: qwraps2::lazyload_cache_dir(path = ".../html")
 
 # For adding maps to plots
 world <- ne_countries(scale = "medium", returnclass = "sf")
@@ -109,9 +109,9 @@ These are the unique groups
 unique(d$species_group)
 ```
 
-### Saduria
+# Saduria
 ```{r saduria, message=FALSE, results="hide"}
-# Filter the saduria data so that we get only hauls with saduria
+# Filter the saduria data so that we get only hauls with Saduria
 sad <- d %>% filter(species_group == "Saduria entomon")
 
 # Drop NA in biomass
@@ -151,17 +151,8 @@ sad <- sad %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
 sad %>% filter(abundance == 0L) %>% distinct(biomass)
 # Nope!
 
-# Plot the distribution of abundance per sample_id
 # How many rows do I have per sample_id?
 sad %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
-
-# Good... Now plot the distribution of abundances
-ggplot(sad, aes(abundance)) + geom_histogram()
-
-# Probably some outliers! Check
-sad %>% arrange(desc(abundance))
-
-# Not sure, will keep but crop the plot
 
 # Good... Now plot the distribution of abundances
 ggplot(sad, aes(abundance)) + geom_histogram() + xlim(c(-1, 30))
@@ -170,7 +161,7 @@ ggplot(sad, aes(abundance)) + geom_histogram() + xlim(c(-1, 30))
 # First make the biomass column 0 if abundance is 0 - else NA (because info is missing)
 sad <- sad %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
 
-# How many NA biomass data? (only 69 rows..)
+# How many NA biomass data?
 sad %>% drop_na(biomass)
 
 # Good... Now plot the distribution of biomasses
@@ -178,6 +169,7 @@ ggplot(sad, aes(biomass)) + geom_histogram()
 
 # Change unit to g/m2
 sad <- sad %>%
+  mutate(abundance = abundance/0.1) %>% # Make it a density (g per m^2)
   mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
   mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
   mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
@@ -189,15 +181,15 @@ sad <- sad %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
 write.csv(sad, "data/for_analysis/saduria.csv")
 ```
 
-### Amphipoda
+# Amphipoda
 ```{r amphipoda, message=FALSE, results="hide"}
-# Filter the saduria data so that we get only hauls with saduria
+# Filter the data so that we get only hauls with Amphipoda
 amp <- d %>% filter(species_group == "Amphipoda")
 
 # Drop NA in biomass
 amp <- amp %>% drop_na(biomass)
 
-# Crop the vector of unique samples to only include IDs that are NOT in the saduria data
+# Crop the vector of unique samples to only include IDs that are NOT in the amphipoda data
 no_amphipoda_samples <- unique_samples$sample_id[!unique_samples$sample_id %in% unique(amp$sample_id)]
 
 no_amphipoda_samples <- d %>%
@@ -211,17 +203,17 @@ no_amphipoda_samples <- d %>%
 #length(unique(d$sample_id))
 #length(unique(no_amphipoda_samples$sample_id)) + length(unique(amp$sample_id))
 
-# Now add in these ID's back to the saduria-only data and make them NA for abundance, biomass and species_group
+# Now add in these ID's back to the amphipoda-only data and make them NA for abundance, biomass and species_group
 amp <- bind_rows(amp, no_amphipoda_samples)
 
-# Inspect a non-saduria ID to see how it was combined
+# Inspect a non-amphipoda ID to see how it was combined
 amp %>% filter(sample_id == head(no_amphipoda_samples$sample_id, 1))
 
 # Add in the species group
 amp$species_group <- "Amphipoda"
 # unique(sad$species_group)
 
-# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without saduria
+# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without amphipoda
 amp <- amp %>% mutate(abundance = coalesce(abundance, 0L))
 
 # If abundance is 0, then biomass should also be (sometimes biomass is NA because it wasn't measured)
@@ -230,6 +222,9 @@ amp <- amp %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
 # Ok, check if there are any rows with biomass but no abundance
 amp %>% filter(abundance == 0L) %>% distinct(biomass)
 # Nope!
+
+# How many rows do I have per sample_id?
+amp %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
 
 # Because we have multiple taxa, we have to sum across all species
 nrow(amp)
@@ -271,28 +266,21 @@ amp %>% group_by(sample_id, taxa) %>% mutate(n = n()) %>% ungroup() %>% distinct
 filter(test, n == 2)
 
 # Good... Now plot the distribution of abundances
-ggplot(amp, aes(abundance)) + geom_histogram()
-
-# Probably some outliers! Check
-amp %>% arrange(desc(abundance))
-
-# Not sure, will keep but crop the plot
-
-# Good... Now plot the distribution of abundances
 ggplot(amp, aes(abundance)) + geom_histogram() + xlim(c(-1, 30))
 
 # And the distribution of biomasses:
 # First make the biomass column 0 if abundance is 0 - else NA (because info is missing)
 amp <- amp %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
 
-# How many NA biomass data? (only 69 rows..)
+# How many NA biomass data?
 amp %>% drop_na(biomass)
 
 # Good... Now plot the distribution of biomasses
 ggplot(amp, aes(biomass)) + geom_histogram()
 
-# Change unit to g/m2
+# Change units
 amp <- amp %>%
+  mutate(abundance = abundance/0.1) %>% # Make it a density (# per m^2)
   mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
   mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
   mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
@@ -304,9 +292,388 @@ amp <- amp %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
 write.csv(amp, "data/for_analysis/amphipoda.csv")
 ```
 
+# Mytiloida
+```{r mytilus, message=FALSE, results="hide"}
+# Filter the data so that we get only hauls with Mytiloida
+myt <- d %>% filter(species_group == "Mytiloida")
 
-### Mytilus
-### Limecola baltica
-### Polychaeta
-### Cumacea
-### Mysida
+ggplot(myt, aes(abundance)) + geom_histogram()
+
+# Drop NA in biomass
+myt <- myt %>% drop_na(biomass)
+
+# Crop the vector of unique samples to only include IDs that are NOT in the mytiloida data
+no_mytiloida_samples <- unique_samples$sample_id[!unique_samples$sample_id %in% unique(myt$sample_id)]
+
+no_mytiloida_samples <- d %>%
+  filter(sample_id %in% no_mytiloida_samples) %>%
+  distinct(sample_id, .keep_all = TRUE) %>% 
+  dplyr::select(-abundance, -biomass, -species_group)
+
+# Check again if these samples are in the mytiloida data (they shouldn't)
+#myt %>% filter(sample_id %in% c(no_mytiloida_samples$sample_id))
+# Compare the lengths of the dataframes to ensure they sum up
+#length(unique(d$sample_id))
+#length(unique(no_mytiloida_samples$sample_id)) + length(unique(myt$sample_id))
+
+# Now add in these ID's back to the mytiloida-only data and make them NA for abundance, biomass and species_group
+myt <- bind_rows(myt, no_mytiloida_samples)
+
+# Inspect a non-mytiloida ID to see how it was combined
+myt %>% filter(sample_id == head(no_mytiloida_samples$sample_id, 1))
+
+# Add in the species group
+myt$species_group <- "Mytiloida"
+# unique(myt$species_group)
+
+# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without mytiloida
+myt <- myt %>% mutate(abundance = coalesce(abundance, 0L))
+
+# If abundance is 0, then biomass should also be (sometimes biomass is NA because it wasn't measured)
+myt <- myt %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# Ok, check if there are any rows with biomass but no abundance
+myt %>% filter(abundance == 0L) %>% distinct(biomass)
+# Nope!
+
+# How many rows do I have per sample_id?
+myt %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+# Good... Now plot the distribution of abundances
+ggplot(myt, aes(abundance)) + geom_histogram() + xlim(c(-1, 30))
+
+# And the distribution of biomasses:
+# First make the biomass column 0 if abundance is 0 - else NA (because info is missing)
+myt <- myt %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# How many NA biomass data?
+myt %>% drop_na(biomass)
+
+# Good... Now plot the distribution of biomasses
+ggplot(myt, aes(biomass)) + geom_histogram()
+
+# Change units
+myt <- myt %>%
+  mutate(abundance = abundance/0.1) %>% # Make it a density (# per m^2)
+  mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
+  mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
+  mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
+  mutate(biomass = biomass_g_m2)
+
+myt <- myt %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
+
+# Finally, save data
+write.csv(myt, "data/for_analysis/mytiloida.csv")
+```
+
+# Limecola balthica
+```{r limecola, message=FALSE, results="hide"}
+# Filter the data so that we get only hauls with Limecola balthica
+lim <- d %>% filter(species_group == "Limecola balthica")
+
+ggplot(lim, aes(abundance)) + geom_histogram()
+
+# Drop NA in biomass
+lim <- lim %>% drop_na(biomass)
+
+# Crop the vector of unique samples to only include IDs that are NOT in the limecola data
+no_limecola_samples <- unique_samples$sample_id[!unique_samples$sample_id %in% unique(lim$sample_id)]
+
+no_limecola_samples <- d %>%
+  filter(sample_id %in% no_limecola_samples) %>%
+  distinct(sample_id, .keep_all = TRUE) %>% 
+  dplyr::select(-abundance, -biomass, -species_group)
+
+# Check again if these samples are in the limecola data (they shouldn't)
+#lim %>% filter(sample_id %in% c(no_limecola_samples$sample_id))
+# Compare the lengths of the dataframes to ensure they sum up
+#length(unique(d$sample_id))
+#length(unique(no_limecola_samples$sample_id)) + length(unique(lim$sample_id))
+
+# Now add in these ID's back to the limecola-only data and make them NA for abundance, biomass and species_group
+lim <- bind_rows(lim, no_limecola_samples)
+
+# Inspect a non-limecola ID to see how it was combined
+lim %>% filter(sample_id == head(no_limecola_samples$sample_id, 1))
+
+# Add in the species group
+lim$species_group <- "Limecola balthica"
+
+# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without limecola
+lim <- lim %>% mutate(abundance = coalesce(abundance, 0L))
+
+# If abundance is 0, then biomass should also be (sometimes biomass is NA because it wasn't measured)
+lim <- lim %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# Ok, check if there are any rows with biomass but no abundance
+lim %>% filter(abundance == 0L) %>% distinct(biomass)
+# Nope!
+
+# How many rows do I have per sample_id?
+lim %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+# Good... Now plot the distribution of abundances
+ggplot(lim, aes(abundance)) + geom_histogram()
+
+# And the distribution of biomasses:
+# First make the biomass column 0 if abundance is 0 - else NA (because info is missing)
+lim <- lim %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# How many NA biomass data?
+lim %>% drop_na(biomass)
+
+# Good... Now plot the distribution of biomasses
+ggplot(lim, aes(biomass)) + geom_histogram()
+
+# Change units
+lim <- lim %>%
+  mutate(abundance = abundance/0.1) %>% # Make it a density (# per m^2)
+  mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
+  mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
+  mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
+  mutate(biomass = biomass_g_m2)
+
+lim <- lim %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
+
+# Finally, save data
+write.csv(lim, "data/for_analysis/limecola.csv")
+```
+
+# Polychaeta
+```{r polychaeta, message=FALSE, results="hide"}
+# Filter the data so that we get only hauls with Polychaeta
+pol <- d %>% filter(species_group == "Polychaeta")
+
+ggplot(pol, aes(abundance)) + geom_histogram()
+
+# Drop NA in biomass
+pol <- pol %>% drop_na(biomass)
+
+# Crop the vector of unique samples to only include IDs that are NOT in the limecola data
+no_polychaeta_samples <- unique_samples$sample_id[!unique_samples$sample_id %in% unique(pol$sample_id)]
+
+no_polychaeta_samples <- d %>%
+  filter(sample_id %in% no_polychaeta_samples) %>%
+  distinct(sample_id, .keep_all = TRUE) %>% 
+  dplyr::select(-abundance, -biomass, -species_group)
+
+# Check again if these samples are in the limecola data (they shouldn't)
+#pol %>% filter(sample_id %in% c(no_polychaeta_samples$sample_id))
+# Compare the lengths of the dataframes to ensure they sum up
+#length(unique(d$sample_id))
+#length(unique(no_polychaeta_samples$sample_id)) + length(unique(pol$sample_id))
+
+# Now add in these ID's back to the polychaeta-only data and make them NA for abundance, biomass and species_group
+pol <- bind_rows(pol, no_polychaeta_samples)
+
+# Inspect a non-polychaeta ID to see how it was combined
+pol %>% filter(sample_id == head(no_polychaeta_samples$sample_id, 1))
+
+# Add in the species group
+pol$species_group <- "Polychaeta"
+
+# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without polychaeta
+pol <- pol %>% mutate(abundance = coalesce(abundance, 0L))
+
+# If abundance is 0, then biomass should also be (sometimes biomass is NA because it wasn't measured)
+pol <- pol %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# Ok, check if there are any rows with biomass but no abundance
+pol %>% filter(abundance == 0L) %>% distinct(biomass)
+# Nope!
+
+# How many rows do I have per sample_id?
+pol %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+# Because we have multiple taxa, we have to sum across all species
+nrow(pol)
+pol2 <- pol %>%
+  group_by(sample_id) %>%
+  mutate(biomass2 = sum(biomass),
+         abundance2 = sum(abundance)) %>% 
+  ungroup() %>% 
+  distinct(sample_id, .keep_all = TRUE) #%>% 
+  # dplyr::select(-biomass, -abundance) %>% 
+  # rename("biomass2" = "biomass",
+  #        "abundance2" = "abundance")
+
+# Test  
+test <- pol %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% data.frame
+filter(test, sample_id == head(filter(test, n == 2)$sample_id, 1)) %>% data.frame()
+filter(pol2, sample_id == head(filter(test, n == 2)$sample_id, 1)) %>% data.frame()
+
+# Perfect, now rename
+pol <- pol %>%
+  group_by(sample_id) %>%
+  mutate(biomass2 = sum(biomass),
+         abundance2 = sum(abundance)) %>% 
+  ungroup() %>% 
+  distinct(sample_id, .keep_all = TRUE) %>%  
+  dplyr::select(-biomass, -abundance) %>% 
+  rename("biomass" = "biomass2",
+         "abundance" = "abundance2")
+
+# Plot the distribution of abundance per sample_id
+# How many rows do I have per sample_id?
+pol %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+test <- pol %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% data.frame
+
+# How many rows do I have per sample_id AND taxa?
+pol %>% group_by(sample_id, taxa) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+filter(test, n == 2)
+
+# Good... Now plot the distribution of abundances
+ggplot(pol, aes(abundance)) + geom_histogram()
+
+# Probably some outliers! Check
+pol %>% arrange(desc(abundance))
+
+# Not sure, will keep but crop the plot
+
+# Good... Now plot the distribution of abundances
+ggplot(pol, aes(abundance)) + geom_histogram() #+ xlim(c(-1, 30))
+
+# And the distribution of biomasses:
+# First make the biomass column 0 if abundance is 0 - else NA (because info is missing)
+pol <- pol %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# How many NA biomass data?
+pol %>% drop_na(biomass)
+
+# Good... Now plot the distribution of biomasses
+ggplot(pol, aes(biomass)) + geom_histogram()
+
+# Change units
+pol <- pol %>%
+  mutate(abundance = abundance/0.1) %>% # Make it a density (# per m^2)
+  mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
+  mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
+  mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
+  mutate(biomass = biomass_g_m2)
+
+pol <- pol %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
+
+# Finally, save data
+write.csv(pol, "data/for_analysis/polychaeta.csv")
+```
+
+# Cumacea
+```{r cumacea, message=FALSE, results="hide"}
+# Filter the data so that we get only hauls with Cumacea
+cuma <- d %>% filter(species_group == "Cumacea")
+
+ggplot(cuma, aes(abundance)) + geom_histogram()
+
+# Drop NA in biomass
+cuma <- cuma %>% drop_na(biomass)
+
+# Crop the vector of unique samples to only include IDs that are NOT in the limecola data
+no_cumacea_samples <- unique_samples$sample_id[!unique_samples$sample_id %in% unique(cuma$sample_id)]
+
+no_cumacea_samples <- d %>%
+  filter(sample_id %in% no_cumacea_samples) %>%
+  distinct(sample_id, .keep_all = TRUE) %>% 
+  dplyr::select(-abundance, -biomass, -species_group)
+
+# Check again if these samples are in the limecola data (they shouldn't)
+#cuma %>% filter(sample_id %in% c(no_cumacea_samples$sample_id))
+# Compare the lengths of the dataframes to ensure they sum up
+#length(unique(d$sample_id))
+#length(unique(no_cumacea_samples$sample_id)) + length(unique(cuma$sample_id))
+
+# Now add in these ID's back to the polychaeta-only data and make them NA for abundance, biomass and species_group
+cuma <- bind_rows(cuma, no_cumacea_samples)
+
+# Inspect a non-polychaeta ID to see how it was combined
+cuma %>% filter(sample_id == head(no_cumacea_samples$sample_id, 1))
+
+# Add in the species group
+cuma$species_group <- "Cumacea"
+
+# Now, if there is an NA in abundance, it should be replaced with zero becomes it comes from the id's without polychaeta
+cuma <- cuma %>% mutate(abundance = coalesce(abundance, 0L))
+
+# If abundance is 0, then biomass should also be (sometimes biomass is NA because it wasn't measured)
+cuma <- cuma %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# Ok, check if there are any rows with biomass but no abundance
+cuma %>% filter(abundance == 0L) %>% distinct(biomass)
+# Nope!
+
+# How many rows do I have per sample_id?
+cuma %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+# Because we have multiple taxa, we have to sum across all species
+nrow(cuma)
+cuma2 <- cuma %>%
+  group_by(sample_id) %>%
+  mutate(biomass2 = sum(biomass),
+         abundance2 = sum(abundance)) %>% 
+  ungroup() %>% 
+  distinct(sample_id, .keep_all = TRUE) #%>% 
+  # dplyr::select(-biomass, -abundance) %>% 
+  # rename("biomass2" = "biomass",
+  #        "abundance2" = "abundance")
+
+# Test  
+test <- cuma %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% data.frame
+filter(test, sample_id == head(filter(test, n == 2)$sample_id, 1)) %>% data.frame()
+filter(cuma2, sample_id == head(filter(test, n == 2)$sample_id, 1)) %>% data.frame()
+
+# Perfect, now rename
+cuma <- cuma %>%
+  group_by(sample_id) %>%
+  mutate(biomass2 = sum(biomass),
+         abundance2 = sum(abundance)) %>% 
+  ungroup() %>% 
+  distinct(sample_id, .keep_all = TRUE) %>%  
+  dplyr::select(-biomass, -abundance) %>% 
+  rename("biomass" = "biomass2",
+         "abundance" = "abundance2")
+
+# Plot the distribution of abundance per sample_id
+# How many rows do I have per sample_id?
+cuma %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+test <- cuma %>% group_by(sample_id) %>% mutate(n = n()) %>% ungroup() %>% data.frame
+
+# How many rows do I have per sample_id AND taxa?
+cuma %>% group_by(sample_id, taxa) %>% mutate(n = n()) %>% ungroup() %>% distinct(n)
+
+# Good... Now plot the distribution of abundances
+ggplot(cuma, aes(abundance)) + geom_histogram()
+
+# Probably some outliers! Check
+cuma %>% arrange(desc(abundance))
+
+# Not sure, will keep but crop the plot
+
+# Good... Now plot the distribution of abundances
+ggplot(cuma, aes(abundance)) + geom_histogram() #+ xlim(c(-1, 30))
+
+# And the distribution of biomasses:
+# First make the biomass column 0 if abundance is 0 - else NA (because info is missing)
+cuma <- cuma %>% mutate(biomass = ifelse(abundance == 0, 0, biomass))
+
+# How many NA biomass data?
+cuma %>% drop_na(biomass)
+
+# Good... Now plot the distribution of biomasses
+ggplot(cuma, aes(biomass)) + geom_histogram()
+
+# Change units
+cuma <- cuma %>%
+  mutate(abundance = abundance/0.1) %>% # Make it a density (# per m^2)
+  mutate(biomass_g_m2 = biomass/0.1) %>% # Make it a density (g per m^2)
+  mutate(biomass_g_km2 = biomass_g_m2*1000000) %>% # Convert to g/km^2
+  mutate(biomass_kg_km2 = biomass_g_km2/1000) %>% # Convert to kg/km^2
+  mutate(biomass = biomass_g_m2)
+
+cuma <- cuma %>% drop_na(year) %>% drop_na(biomass) %>% drop_na(depth)
+
+# Finally, save data
+write.csv(cuma, "data/for_analysis/cumacea.csv")
+```
+
