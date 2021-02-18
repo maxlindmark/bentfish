@@ -84,7 +84,6 @@ d <- read.csv("data/data_complete.csv") %>% dplyr::select(-X)
 # Read in the stomach-data (to make the pred grid)
 dd <- read.csv("data/for_analysis/stomach/2015-2018_stomach_data_20.12.16.csv") %>% dplyr::select(-X)
 
-
 ggplot(d, aes(factor(month))) + geom_histogram(stat = "count")
 
 # Filter the months in the spring, which is what we use for this analysis, so that the grid isn't unnecessarily large, and the years after 1983 for coverage
@@ -707,6 +706,18 @@ p4 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(SubDiv))) +
 p3/p4
 
 ggsave("figures/sub_division_full.png", width = 9, height = 9, dpi = 600)
+
+# TEST LOCATION OF STOMACH DATA
+# dd %>% 
+#   filter(Year > 2015) %>% 
+#   ggplot(., aes(x = Long, y = Lat, color = Cruise)) +
+#   geom_point(size = 0.8) +
+#   facet_grid(Quarter ~ Year) +
+#   coord_cartesian(expand = 0) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2) +
+#   coord_sf(xlim = c(14, 20), ylim = c(54, 59)) + 
+#   theme_classic(base_size = 16) +
+#   NULL
 ```
 
 Finally, drop NA's and save

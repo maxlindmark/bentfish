@@ -387,6 +387,21 @@ df_full %>%
   arrange(desc(cruise_year_quarter_pred_id))
 ```
 
+
+```{r test}
+# plot stations
+
+test <- df_full %>% filter(Year == "2016", Cruise == "BITS")
+
+ggplot(test, aes(Long, Lat)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(14, 20), ylim = c(54, 59)) + 
+  theme_classic(base_size = 20)
+  
+```
+
 According to the data overview, we can now add other data:
    - 2017_4_BITS_FLE - Exists as a tab in separate flounder data
    - 2018_4_BITS_FLE - Does not exist
