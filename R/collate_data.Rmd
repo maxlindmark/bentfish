@@ -727,18 +727,29 @@ ggplot(dat, aes(x = Longitud, y = Latitud, color = SubDiv)) +
 
 # Now do a manual area, similar to sub divisions
 dat$sub_area <- as.numeric(dat$SubDiv)
+dat$sub_area <- as.factor(dat$sub_area)
+
+unique(dat$sub_area)
+
+dat <- dat %>% mutate(sub_area = fct_recode(sub_area,
+                                            "1" = "24",
+                                            "2" = "25",
+                                            "3" = "26",
+                                            "4" = "27",
+                                            "5" = "28",
+                                            "6" = "29"))
 
 unique(dat$sub_area)
 
 # Now modify them...
 dat <- dat %>%
-  mutate(sub_area = ifelse(Latitud > 56.18 & Longitud < 18, 27, sub_area)) %>% 
-  mutate(sub_area = ifelse(Longitud > 17.6 & Latitud >= 56.49, 28, sub_area)) %>% 
-  mutate(sub_area = ifelse(Longitud > 17 & Latitud < 56.49, 26, sub_area))
+  mutate(sub_area = ifelse(Latitud > 56.18 & Longitud < 18, "4", sub_area)) %>% 
+  mutate(sub_area = ifelse(Longitud > 17.6 & Latitud >= 56.49, "5", sub_area)) %>% 
+  mutate(sub_area = ifelse(Longitud > 17 & Latitud < 56.49, "3", sub_area))
 
 ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
 
-ggplot(dat, aes(x = Longitud, y = Latitud, color = factor(sub_area))) +
+ggplot(dat, aes(x = Longitud, y = Latitud, color = sub_area)) +
   geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +

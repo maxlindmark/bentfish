@@ -627,28 +627,25 @@ ggplot(pred_grid2, aes(x = lon, y = lat, color = SubDiv)) +
 
 # Now do a manual area, similar to sub divisions
 pred_grid2$sub_area <- as.numeric(pred_grid2$SubDiv)
-
-pred_grid2$sub_area[is.na(pred_grid2$sub_area)] <- 28
+pred_grid2$sub_area <- as.factor(pred_grid2$sub_area)
 
 unique(pred_grid2$sub_area)
 
-ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(sub_area))) +
-  geom_raster(alpha = 0.5) +
-  coord_cartesian(expand = 0) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-  theme_classic(base_size = 20) +
-  geom_point(data = d, aes(lon, lat, color = factor(sub_area)),
-             inherit.aes = FALSE, size = 0.3) + # add benthic data!
-  geom_point(data = dd, aes(Long, Lat, color = factor(sub_area)), 
-             inherit.aes = FALSE, size = 0.3, shape = 2) + # add benthic data!
-  NULL
+pred_grid2 <- pred_grid2 %>% mutate(sub_area = fct_recode(sub_area,
+                                                          "1" = "24",
+                                                          "2" = "25",
+                                                          "3" = "26",
+                                                          "4" = "27",
+                                                          "5" = "28",
+                                                          "6" = "29"))
+
+unique(pred_grid2$sub_area)
 
 # Now modify them...
 pred_grid2 <- pred_grid2 %>%
-  mutate(sub_area = ifelse(lat > 56.18 & lon < 18, 27, sub_area)) %>% 
-  mutate(sub_area = ifelse(lon > 17.6 & lat >= 56.49, 28, sub_area)) %>% 
-  mutate(sub_area = ifelse(lon > 17 & lat < 56.49, 26, sub_area))
+  mutate(sub_area = ifelse(lat > 56.18 & lon < 18, "4", sub_area)) %>% 
+  mutate(sub_area = ifelse(lon > 17.6 & lat >= 56.49, "5", sub_area)) %>% 
+  mutate(sub_area = ifelse(lon > 17 & lat < 56.49, "3", sub_area))
 
 p1 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(sub_area))) +
   geom_raster(alpha = 0.5) +

@@ -207,7 +207,7 @@ Now calculate the index by year and sub area
 # sort(unique(sad$sub_area))
 
 # Sub-area 25
-sad_preds25 <- predict(m_sad, filter(pred_grid_sad, sub_area == 25),
+sad_preds25 <- predict(m_sad, filter(pred_grid_sad, sub_area == 2),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 sad_ind25 <- get_index(sad_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -215,16 +215,16 @@ sad_ind25 <- get_index(sad_preds25, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells25 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+ncells25 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 2) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 sad_ind25 <- sad_ind25 %>% mutate(est = est / ncells25,
                                   lwr = lwr / ncells25,
                                   upr = upr / ncells25,
-                                  sub_area = 25)
+                                  sub_area = 2)
 
 # Sub-area 27
-sad_preds27 <- predict(m_sad, filter(pred_grid_sad, sub_area == 27),
+sad_preds27 <- predict(m_sad, filter(pred_grid_sad, sub_area == 4),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 sad_ind27 <- get_index(sad_preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -232,16 +232,16 @@ sad_ind27 <- get_index(sad_preds27, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells27 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+ncells27 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 4) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 sad_ind27 <- sad_ind27 %>% mutate(est = est / ncells27,
                                   lwr = lwr / ncells27,
                                   upr = upr / ncells27,
-                                  sub_area = 27)
+                                  sub_area = 4)
  
 # Sub-area 28
-sad_preds28 <- predict(m_sad, filter(pred_grid_sad, sub_area == 28),
+sad_preds28 <- predict(m_sad, filter(pred_grid_sad, sub_area == 5),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 sad_ind28 <- get_index(sad_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -249,13 +249,13 @@ sad_ind28 <- get_index(sad_preds28, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells28 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+ncells28 <- pred_grid_sad %>% filter(year == 2015 & sub_area == 5) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 sad_ind28 <- sad_ind28 %>% mutate(est = est / ncells28,
                                   lwr = lwr / ncells28,
                                   upr = upr / ncells28,
-                                  sub_area = 28)
+                                  sub_area = 5)
 
 # Merge prediction-data
 sad_preds <- bind_rows(sad_ind25, sad_ind27, sad_ind28)
@@ -435,7 +435,7 @@ Now calculate the index by year and sub area
 # sort(unique(amp$sub_area))
 
 # Sub-area 25
-amp_preds25 <- predict(m_amp, filter(pred_grid_amp, sub_area == 25),
+amp_preds25 <- predict(m_amp, filter(pred_grid_amp, sub_area == 2),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 amp_ind25 <- get_index(amp_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -443,16 +443,16 @@ amp_ind25 <- get_index(amp_preds25, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells25 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+ncells25 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 2) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 amp_ind25 <- amp_ind25 %>% mutate(est = est / ncells25,
                                   lwr = lwr / ncells25,
                                   upr = upr / ncells25,
-                                  sub_area = 25)
+                                  sub_area = 2)
 
 # Sub-area 27
-amp_preds27 <- predict(m_amp, filter(pred_grid_amp, sub_area == 27),
+amp_preds27 <- predict(m_amp, filter(pred_grid_amp, sub_area == 4),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 amp_ind27 <- get_index(amp_preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -460,16 +460,16 @@ amp_ind27 <- get_index(amp_preds27, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells27 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+ncells27 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 4) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 amp_ind27 <- amp_ind27 %>% mutate(est = est / ncells27,
                                   lwr = lwr / ncells27,
                                   upr = upr / ncells27,
-                                  sub_area = 27)
+                                  sub_area = 4)
  
 # Sub-area 28
-amp_preds28 <- predict(m_amp, filter(pred_grid_amp, sub_area == 28),
+amp_preds28 <- predict(m_amp, filter(pred_grid_amp, sub_area == 5),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 amp_ind28 <- get_index(amp_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -477,13 +477,13 @@ amp_ind28 <- get_index(amp_preds28, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells28 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+ncells28 <- pred_grid_amp %>% filter(year == 2015 & sub_area == 5) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 amp_ind28 <- amp_ind28 %>% mutate(est = est / ncells28,
                                   lwr = lwr / ncells28,
                                   upr = upr / ncells28,
-                                  sub_area = 28)
+                                  sub_area = 5)
 
 # Merge prediction-data
 amp_preds <- bind_rows(amp_ind25, amp_ind27, amp_ind28)
@@ -663,7 +663,7 @@ Now calculate the index by year and sub area
 # sort(unique(myt$sub_area))
 
 # Sub-area 25
-myt_preds25 <- predict(m_myt, filter(pred_grid_myt, sub_area == 25),
+myt_preds25 <- predict(m_myt, filter(pred_grid_myt, sub_area == 2),
                    return_tmb_object = TRUE) # Predict using the grid for subarea
 
 myt_ind25 <- get_index(myt_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -671,16 +671,16 @@ myt_ind25 <- get_index(myt_preds25, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells25 <- pred_grid_myt %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+ncells25 <- pred_grid_myt %>% filter(year == 2015 & sub_area == 2) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 myt_ind25 <- myt_ind25 %>% mutate(est = est / ncells25,
                                   lwr = lwr / ncells25,
                                   upr = upr / ncells25,
-                                  sub_area = 25)
+                                  sub_area = 2)
 
 # Sub-area 27
-myt_preds27 <- predict(m_myt, filter(pred_grid_myt, sub_area == 27),
+myt_preds27 <- predict(m_myt, filter(pred_grid_myt, sub_area == 4),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 myt_ind27 <- get_index(myt_preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -688,16 +688,16 @@ myt_ind27 <- get_index(myt_preds27, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells27 <- pred_grid_myt %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+ncells27 <- pred_grid_myt %>% filter(year == 2015 & sub_area == 4) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 myt_ind27 <- myt_ind27 %>% mutate(est = est / ncells27,
                                   lwr = lwr / ncells27,
                                   upr = upr / ncells27,
-                                  sub_area = 27)
+                                  sub_area = 4)
  
 # Sub-area 28
-myt_preds28 <- predict(m_myt, filter(pred_grid_myt, sub_area == 28),
+myt_preds28 <- predict(m_myt, filter(pred_grid_myt, sub_area == 5),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 myt_ind28 <- get_index(myt_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -705,13 +705,13 @@ myt_ind28 <- get_index(myt_preds28, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells28 <- pred_grid_myt %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+ncells28 <- pred_grid_myt %>% filter(year == 2015 & sub_area == 5) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 myt_ind28 <- myt_ind28 %>% mutate(est = est / ncells28,
                                   lwr = lwr / ncells28,
                                   upr = upr / ncells28,
-                                  sub_area = 28)
+                                  sub_area = 5)
 
 # Merge prediction-data
 myt_preds <- bind_rows(myt_ind25, myt_ind27, myt_ind28)
@@ -891,7 +891,7 @@ Now calculate the index by year and sub area
 # sort(unique(lim$sub_area))
 
 # Sub-area 25
-lim_preds25 <- predict(m_lim, filter(pred_grid_lim, sub_area == 25),
+lim_preds25 <- predict(m_lim, filter(pred_grid_lim, sub_area == 2),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 lim_ind25 <- get_index(lim_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -899,16 +899,16 @@ lim_ind25 <- get_index(lim_preds25, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells25 <- pred_grid_lim %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+ncells25 <- pred_grid_lim %>% filter(year == 2015 & sub_area == 2) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 lim_ind25 <- lim_ind25 %>% mutate(est = est / ncells25,
                                   lwr = lwr / ncells25,
                                   upr = upr / ncells25,
-                                  sub_area = 25)
+                                  sub_area = 2)
 
 # Sub-area 27
-lim_preds27 <- predict(m_lim, filter(pred_grid_lim, sub_area == 27),
+lim_preds27 <- predict(m_lim, filter(pred_grid_lim, sub_area == 4),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 lim_ind27 <- get_index(lim_preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -916,16 +916,16 @@ lim_ind27 <- get_index(lim_preds27, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells27 <- pred_grid_lim %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+ncells27 <- pred_grid_lim %>% filter(year == 2015 & sub_area == 4) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 lim_ind27 <- lim_ind27 %>% mutate(est = est / ncells27,
                                   lwr = lwr / ncells27,
                                   upr = upr / ncells27,
-                                  sub_area = 27)
+                                  sub_area = 4)
  
 # Sub-area 28
-lim_preds28 <- predict(m_lim, filter(pred_grid_lim, sub_area == 28),
+lim_preds28 <- predict(m_lim, filter(pred_grid_lim, sub_area == 5),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 lim_ind28 <- get_index(lim_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -933,13 +933,13 @@ lim_ind28 <- get_index(lim_preds28, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells28 <- pred_grid_lim %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+ncells28 <- pred_grid_lim %>% filter(year == 2015 & sub_area == 5) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 lim_ind28 <- lim_ind28 %>% mutate(est = est / ncells28,
                                   lwr = lwr / ncells28,
                                   upr = upr / ncells28,
-                                  sub_area = 28)
+                                  sub_area = 5)
 
 # Merge prediction-data
 lim_preds <- bind_rows(lim_ind25, lim_ind27, lim_ind28)
@@ -1119,7 +1119,7 @@ Now calculate the index by year and sub area
 # sort(unique(pol$sub_area))
 
 # Sub-area 25
-pol_preds25 <- predict(m_pol, filter(pred_grid_pol, sub_area == 25),
+pol_preds25 <- predict(m_pol, filter(pred_grid_pol, sub_area == 2),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 pol_ind25 <- get_index(pol_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -1127,16 +1127,16 @@ pol_ind25 <- get_index(pol_preds25, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells25 <- pred_grid_pol %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+ncells25 <- pred_grid_pol %>% filter(year == 2015 & sub_area == 2) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 pol_ind25 <- pol_ind25 %>% mutate(est = est / ncells25,
                                   lwr = lwr / ncells25,
                                   upr = upr / ncells25,
-                                  sub_area = 25)
+                                  sub_area = 2)
 
 # Sub-area 27
-pol_preds27 <- predict(m_pol, filter(pred_grid_pol, sub_area == 27),
+pol_preds27 <- predict(m_pol, filter(pred_grid_pol, sub_area == 4),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 pol_ind27 <- get_index(pol_preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -1144,16 +1144,16 @@ pol_ind27 <- get_index(pol_preds27, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells27 <- pred_grid_pol %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+ncells27 <- pred_grid_pol %>% filter(year == 2015 & sub_area == 4) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 pol_ind27 <- pol_ind27 %>% mutate(est = est / ncells27,
                                   lwr = lwr / ncells27,
                                   upr = upr / ncells27,
-                                  sub_area = 27)
+                                  sub_area = 4)
  
 # Sub-area 28
-pol_preds28 <- predict(m_pol, filter(pred_grid_pol, sub_area == 28),
+pol_preds28 <- predict(m_pol, filter(pred_grid_pol, sub_area == 5),
                        return_tmb_object = TRUE) # Predict using the grid for subarea
 
 pol_ind28 <- get_index(pol_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -1161,13 +1161,13 @@ pol_ind28 <- get_index(pol_preds28, bias_correct = T) # Get the index (sum of al
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells28 <- pred_grid_pol %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+ncells28 <- pred_grid_pol %>% filter(year == 2015 & sub_area == 5) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 pol_ind28 <- pol_ind28 %>% mutate(est = est / ncells28,
                                   lwr = lwr / ncells28,
                                   upr = upr / ncells28,
-                                  sub_area = 28)
+                                  sub_area = 5)
 
 # Merge prediction-data
 pol_preds <- bind_rows(pol_ind25, pol_ind27, pol_ind28)
@@ -1347,7 +1347,7 @@ Now calculate the index by year and sub area
 # sort(unique(cuma$sub_area))
 
 # Sub-area 25
-cuma_preds25 <- predict(m_cuma, filter(pred_grid_cuma, sub_area == 25),
+cuma_preds25 <- predict(m_cuma, filter(pred_grid_cuma, sub_area == 2),
                         return_tmb_object = TRUE) # Predict using the grid for subarea
 
 cuma_ind25 <- get_index(cuma_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -1355,16 +1355,16 @@ cuma_ind25 <- get_index(cuma_preds25, bias_correct = T) # Get the index (sum of 
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells25 <- pred_grid_cuma %>% filter(year == 2015 & sub_area == 25) %>% nrow()
+ncells25 <- pred_grid_cuma %>% filter(year == 2015 & sub_area == 2) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 cuma_ind25 <- cuma_ind25 %>% mutate(est = est / ncells25,
                                     lwr = lwr / ncells25,
                                     upr = upr / ncells25,
-                                    sub_area = 25)
+                                    sub_area = 2)
 
 # Sub-area 27
-cuma_preds27 <- predict(m_cuma, filter(pred_grid_cuma, sub_area == 27),
+cuma_preds27 <- predict(m_cuma, filter(pred_grid_cuma, sub_area == 4),
                         return_tmb_object = TRUE) # Predict using the grid for subarea
 
 cuma_ind27 <- get_index(cuma_preds27, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -1372,16 +1372,16 @@ cuma_ind27 <- get_index(cuma_preds27, bias_correct = T) # Get the index (sum of 
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells27 <- pred_grid_cuma %>% filter(year == 2015 & sub_area == 27) %>% nrow()
+ncells27 <- pred_grid_cuma %>% filter(year == 2015 & sub_area == 4) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 cuma_ind27 <- cuma_ind27 %>% mutate(est = est / ncells27,
                                     lwr = lwr / ncells27,
                                     upr = upr / ncells27,
-                                    sub_area = 27)
+                                    sub_area = 4)
  
 # Sub-area 28
-cuma_preds28 <- predict(m_cuma, filter(pred_grid_cuma, sub_area == 28),
+cuma_preds28 <- predict(m_cuma, filter(pred_grid_cuma, sub_area == 5),
                         return_tmb_object = TRUE) # Predict using the grid for subarea
 
 cuma_ind28 <- get_index(cuma_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
@@ -1389,13 +1389,13 @@ cuma_ind28 <- get_index(cuma_preds28, bias_correct = T) # Get the index (sum of 
 # The index is now the sum of grid cells in g/area of a grid cell
 # First multiply by the area of a grid cell to get raw g
 # Then divide that by the total area
-ncells28 <- pred_grid_cuma %>% filter(year == 2015 & sub_area == 28) %>% nrow()
+ncells28 <- pred_grid_cuma %>% filter(year == 2015 & sub_area == 5) %>% nrow()
 
 # This is the same as simply dividing by ncells2
 cuma_ind28 <- cuma_ind28 %>% mutate(est = est / ncells28,
                                     lwr = lwr / ncells28,
                                     upr = upr / ncells28,
-                                    sub_area = 28)
+                                    sub_area = 5)
 
 # Merge prediction-data
 cuma_preds <- bind_rows(cuma_ind25, cuma_ind27, cuma_ind28)
@@ -1419,7 +1419,7 @@ ggplot(bind_rows(p, d), aes(year, est, color = source)) +
   facet_wrap(~ sub_area, scales = "free", ncol = 2) +
   geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.4) + 
   theme_classic(base_size = 15) + 
-  ggtitle("Polychaeta")
+  ggtitle("Cumacea")
 ```
 
 # Merge data to a full index

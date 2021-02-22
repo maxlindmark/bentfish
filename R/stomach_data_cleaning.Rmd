@@ -1254,18 +1254,27 @@ Now create a new sub-area that matches the benthic data. This is semi-arbitrary,
 ```{r add new sub-area, message=FALSE}
 # Now do a manual area, similar to sub divisions
 full_dat$sub_area <- as.numeric(full_dat$SubDiv)
+full_dat$sub_area <- as.factor(full_dat$sub_area)
 
 unique(full_dat$sub_area)
 
+full_dat <- full_dat %>% mutate(sub_area = fct_recode(sub_area,
+                                                      "1" = "24",
+                                                      "2" = "25",
+                                                      "3" = "26",
+                                                      "4" = "27",
+                                                      "5" = "28",
+                                                      "6" = "29"))
+
 # Now modify them...
 full_dat <- full_dat %>%
-  mutate(sub_area = ifelse(Lat > 56.18 & Long < 18, 27, sub_area)) %>% 
-  mutate(sub_area = ifelse(Long > 17.6 & Lat >= 56.49, 28, sub_area)) %>% 
-  mutate(sub_area = ifelse(Long > 17 & Lat < 56.49, 26, sub_area))
+  mutate(sub_area = ifelse(Lat > 56.18 & Long < 18, "4", sub_area)) %>% 
+  mutate(sub_area = ifelse(Long > 17.6 & Lat >= 56.49, "5", sub_area)) %>% 
+  mutate(sub_area = ifelse(Long > 17 & Lat < 56.49, "3", sub_area))
 
 ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
 
-ggplot(full_dat, aes(x = Long, y = Lat, color = factor(sub_area))) +
+ggplot(full_dat, aes(x = Long, y = Lat, color = sub_area)) +
   geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
