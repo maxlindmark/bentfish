@@ -2,7 +2,7 @@
 get_sub_area <- function(dat){
 
   # Get ICES rect
-  dat$ices_rect <- mapplots::ices.rect2(lon = dat$Longitud, lat = dat$Latitud)
+  dat$ices_rect <- mapplots::ices.rect2(lon = dat$lon, lat = dat$lat)
 
   # Color according to sub-division
   dat <- dat %>%
@@ -33,10 +33,10 @@ get_sub_area <- function(dat){
     mutate(SubDiv = ifelse(ices_rect %in% c("42G8", "42G9", "42H0", "42H1", "42H2",
                                             "43G8", "43G9", "43H0", "43H1", "43H2",
                                             "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
-    mutate(SubDiv = ifelse(Latitud > 58.5 & Longitud > 19, "29", SubDiv)) %>%
-    mutate(SubDiv = ifelse(Latitud > 57 & Latitud < 58.5 & Longitud > 19 & Longitud < 22, "28", SubDiv)) %>%
-    mutate(SubDiv = ifelse(Latitud > 57 & Latitud < 60 & Longitud > 16 & Longitud < 18, "27", SubDiv)) %>%
-    mutate(SubDiv = ifelse(Latitud > 55.5 & Latitud < 56.5 & Longitud > 14 & Longitud < 16, "25", SubDiv)) #%>%
+    mutate(SubDiv = ifelse(lat > 58.5 & lon > 19, "29", SubDiv)) %>%
+    mutate(SubDiv = ifelse(lat > 57 & lat < 58.5 & lon > 19 & lon < 22, "28", SubDiv)) %>%
+    mutate(SubDiv = ifelse(lat > 57 & lat < 60 & lon > 16 & lon < 18, "27", SubDiv)) %>%
+    mutate(SubDiv = ifelse(lat > 55.5 & lat < 56.5 & lon > 14 & lon < 16, "25", SubDiv)) #%>%
     #mutate(SubDiv = factor(SubDiv))
 
 
@@ -54,9 +54,9 @@ get_sub_area <- function(dat){
 
   # Now modify them...
   dat <- dat %>%
-    mutate(sub_area = ifelse(Latitud > 56.18 & Longitud < 18, "4", sub_area)) %>% 
-    mutate(sub_area = ifelse(Longitud > 17.6 & Latitud >= 56.49, "5", sub_area)) %>% 
-    mutate(sub_area = ifelse(Longitud > 17 & Latitud < 56.49, "3", sub_area))
+    mutate(sub_area = ifelse(lat > 56.18 & lon < 18, "4", sub_area)) %>% 
+    mutate(sub_area = ifelse(lon > 17.6 & lat >= 56.49, "5", sub_area)) %>% 
+    mutate(sub_area = ifelse(lon > 17 & lat < 56.49, "3", sub_area))
 
 }
 
