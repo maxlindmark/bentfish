@@ -44,6 +44,7 @@ R/*.pdf
 /data/shapefiles
 /data/stomach_data
 /data/for_analysis/stomach
+/data/from_mich
 
 # Presentations
 /presentations
