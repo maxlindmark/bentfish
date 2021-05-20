@@ -1,8 +1,8 @@
 # Return sub_area based on coordinates
-get_sub_area <- function(dat){
+get_sub_area <- function(dat, lon, lat){
 
   # Get ICES rect
-  dat$ices_rect <- mapplots::ices.rect2(lon = dat$lon, lat = dat$lat)
+  dat$ices_rect <- mapplots::ices.rect2(lon = lon, lat = lat)
 
   # Color according to sub-division
   dat <- dat %>%
