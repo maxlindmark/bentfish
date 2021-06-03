@@ -44,7 +44,8 @@ R/*.pdf
 /data/shapefiles
 /data/stomach_data
 /data/for_analysis/stomach
-/data/from_mich
+/data/condition_data/trawl_surveys_(s) (10).csv
+/data/condition_data/trawl_surveys_zincl_(l) (16).csv
 
 # Presentations
 /presentations
