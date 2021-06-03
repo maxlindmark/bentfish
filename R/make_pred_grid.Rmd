@@ -81,13 +81,19 @@ First create a grid for predictions based on the data (temporary approach!)
 # Read in the benthic data
 d <- read.csv("data/data_complete.csv") %>% dplyr::select(-X)
 
+d <- d %>% mutate(sub_area = as.factor(sub_area),
+                  SubDiv = as.factor(SubDiv))
+
 # Read in the stomach-data (to make the pred grid)
 dd <- read.csv("data/for_analysis/stomach/2015-2018_stomach_data_20.12.16.csv") %>% dplyr::select(-X)
 
+dd <- dd %>% mutate(sub_area = as.factor(sub_area),
+                    SubDiv = as.factor(SubDiv))
+
 ggplot(d, aes(factor(month))) + geom_histogram(stat = "count")
 
-# Filter the months in the spring, which is what we use for this analysis, so that the grid isn't unnecessarily large, and the years after 1983 for coverage
-d <- d %>% filter(year > 1983 & month > 3 & month < 7)
+# Filter the months in the spring, which is what we use for this analysis, so that the grid isn't unnecessarily large, and the years after 1979 for coverage
+d <- d %>% filter(year > 1978 & month > 3 & month < 7)
 
 # Generate the coordinates
 pred_grid <- expand.grid(
@@ -563,148 +569,81 @@ Now do temperature
 Lastly, add in ICES areas information
 
 ```{r add ICES areas, message=FALSE, results="hide"}
-# Now plot the data points and colour according to ICES rectangle
-pred_grid2$ices_rect <- ices.rect2(lon = pred_grid2$lon, lat = pred_grid2$lat)
+# Add in sub_area into data
+# Load function
+func <- 
+  getURL("https://raw.githubusercontent.com/maxlindmark/bentfish/main/R/functions/get_sub_area.R", 
+         ssl.verifypeer = FALSE)
 
-colourCount = length(unique(pred_grid2$ices_rect))
-getPalette = colorRampPalette(brewer.pal(9, "Dark2"))
+eval(parse(text = func))
 
-ggplot(pred_grid2, aes(x = lon, y = lat, color = ices_rect)) +
-  geom_point() +
-  #scale_color_brewer(palette = "Dark2") +
-  scale_color_manual(values = getPalette(colourCount)) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-  theme_classic(base_size = 20) +
-  NULL
+pred_grid2 <- get_sub_area(dat = pred_grid2, lat = pred_grid2$lat, lon = pred_grid2$lon)
 
-# Color according to sub-division
-pred_grid2 <- pred_grid2 %>% 
-  mutate(SubDiv = NA) %>% 
-  mutate(SubDiv = ifelse(ices_rect %in% c("37G0", "37G1",
-                                          "38G0", "38G1", 
-                                          "39F9", "39G0", "39G1",
-                                          "40F9", "40G0", "40G1"), "22", SubDiv)) %>% 
-  mutate(SubDiv = ifelse(ices_rect == "40G2", "23", SubDiv)) %>% 
-  mutate(SubDiv = ifelse(ices_rect %in% c("37G2", "37G3", "37G4",
-                                          "38G1", "38G2", "38G3", "38G4", 
-                                          "39G1", "39G2", "39G3", "39G4",
-                                          "40G1"), "24", SubDiv)) %>% 
-  mutate(SubDiv = ifelse(ices_rect %in% c("40G4",
-                                          "37G5", "37G6", "37G7",
-                                          "38G5", "38G6", "38G7",
-                                          "39G5", "39G6", "39G7",
-                                          "40G5", "40G6", "40G7",
-                                          "41G5", "41G6", "41G7"), "25", SubDiv)) %>% 
-  mutate(SubDiv = ifelse(ices_rect %in% c("37G8", "37G9", "37H0",
-                                          "38G8", "38G9", "38H0",
-                                          "39G8", "39G9", "39H0",
-                                          "40G8", "40G9", "40H0",
-                                          "41G8", "41G9", "41H0"), "26", SubDiv)) %>% 
-  mutate(SubDiv = ifelse(ices_rect %in% c("42G6", "42G7",
-                                          "43G6", "43G7",
-                                          "44G6", "44G7", "44G8"), "27", SubDiv)) %>% 
-  mutate(SubDiv = ifelse(ices_rect %in% c("42G8", "42G9", "42H0", "42H1", "42H2",
-                                          "43G8", "43G9", "43H0", "43H1", "43H2",
-                                          "44G8", "44G9", "44H0", "44H1", "44H2"), "28", SubDiv)) %>%
-  mutate(SubDiv = ifelse(lat > 58.5 & lon > 19, "29", SubDiv)) %>%
-  mutate(SubDiv = ifelse(lat > 57 & lat < 58.5 & lon > 19 & lon < 22, "28", SubDiv)) %>%
-  mutate(SubDiv = ifelse(lat > 57 & lat < 58.5 & lon > 18 & lon < 22, "28", SubDiv)) %>%
-  mutate(SubDiv = ifelse(lat > 57 & lat < 60 & lon > 16 & lon < 18, "27", SubDiv)) %>%
-  mutate(SubDiv = ifelse(lat > 55.5 & lat < 56.5 & lon > 14 & lon < 16, "25", SubDiv)) #%>% 
-  #mutate(SubDiv = factor(SubDiv))
+pred_grid2 <- pred_grid2 %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
 
-#pred_grid2 <- pred_grid2 %>% drop_na(SubDiv) 
-
-ggplot(pred_grid2, aes(x = lon, y = lat, color = SubDiv)) +
-  geom_point() +
-  coord_cartesian(expand = 0) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-  theme_classic(base_size = 20) +
-  geom_point(data = d, aes(lon, lat), inherit.aes = FALSE, color = "black", size = 0.2) + # add data! 
-  NULL
-
-# Now do a manual area, similar to sub divisions
-pred_grid2$sub_area <- as.numeric(pred_grid2$SubDiv)
-pred_grid2$sub_area <- as.factor(pred_grid2$sub_area)
-
-unique(pred_grid2$sub_area)
-
-pred_grid2 <- pred_grid2 %>% mutate(sub_area = fct_recode(sub_area,
-                                                          "1" = "24",
-                                                          "2" = "25",
-                                                          "3" = "26",
-                                                          "4" = "27",
-                                                          "5" = "28",
-                                                          "6" = "29"))
-
-unique(pred_grid2$sub_area)
-
-# Now modify them...
-pred_grid2 <- pred_grid2 %>%
-  mutate(sub_area = ifelse(lat > 56.18 & lon < 18, "4", sub_area)) %>% 
-  mutate(sub_area = ifelse(lon > 17.6 & lat >= 56.49, "5", sub_area)) %>% 
-  mutate(sub_area = ifelse(lon > 17 & lat < 56.49, "3", sub_area))
-
-p1 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(sub_area))) +
-  geom_raster(alpha = 0.5) +
+p1a <- pred_grid2 %>% drop_na(sub_area) %>% 
+  ggplot(., aes(x = lon, y = lat, fill = sub_area)) +
+  geom_raster() +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
   theme_classic(base_size = 16) +
-  geom_point(data = d, aes(lon, lat, color = factor(sub_area)),
-             inherit.aes = FALSE, size = 0.3) + # add benthic data!
-  ggtitle("Benthic data") +
-  guides(color = FALSE) + 
-  NULL
+  ggtitle("Pred grid")
 
-p2 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(sub_area))) +
-  geom_raster(alpha = 0.5) +
+p1b <- d %>% drop_na(sub_area) %>%
+  ggplot(., aes(x = lon, y = lat, color = sub_area)) +
+  geom_point() +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
   theme_classic(base_size = 16) +
-  geom_point(data = dd, aes(Long, Lat, color = factor(sub_area)), 
-             inherit.aes = FALSE, size = 0.3, shape = 2) + # add stomach data!
-  ggtitle("Stomach data") + 
-  guides(color = FALSE) +
-  NULL
-  
-p1/p2
+  ggtitle("Benthic data")
+
+p1c <- dd %>% drop_na(sub_area) %>%
+  ggplot(., aes(x = Long, y = Lat, color = sub_area)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  theme_classic(base_size = 16) +
+  ggtitle("Stomach data")
+
+p1a/p1b/p1c
 
 ggsave("figures/sub_areas_full.png", width = 9, height = 9, dpi = 600)
 
 # This is what the ICES areas would look like
-p3 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(SubDiv))) +
-  geom_raster(alpha = 0.5) +
+p2a <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = SubDiv)) +
+  geom_raster() +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
   theme_classic(base_size = 16) +
-  geom_point(data = d, aes(lon, lat, color = factor(sub_area)),
-             inherit.aes = FALSE, size = 0.3) + # add benthic data!
-  ggtitle("Benthic data") +
-  guides(color = FALSE) + 
-  NULL
+  ggtitle("Pred grid")
 
-p4 <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = factor(SubDiv))) +
-  geom_raster(alpha = 0.5) +
+p2b <- d %>% drop_na(SubDiv) %>% 
+  ggplot(., aes(x = lon, y = lat, color = SubDiv)) +
+  geom_point() +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
   theme_classic(base_size = 16) +
-  geom_point(data = dd, aes(Long, Lat, color = factor(sub_area)), 
-             inherit.aes = FALSE, size = 0.3, shape = 2) + # add stomach data!
-  ggtitle("Stomach data") + 
-  guides(color = FALSE) +
-  NULL
-  
-p3/p4
+  ggtitle("Benthic data")
+
+p2c <- dd %>% drop_na(SubDiv) %>% 
+  ggplot(., aes(x = Long, y = Lat, color = SubDiv)) +
+  geom_point() +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  theme_classic(base_size = 16) +
+  ggtitle("Stomach data")
+
+p2a/p2b/p2c
 
 ggsave("figures/sub_division_full.png", width = 9, height = 9, dpi = 600)
 
-# TEST LOCATION OF STOMACH DATA
+# Test location of stomach data
 # dd %>% 
 #   filter(Year > 2015) %>% 
 #   ggplot(., aes(x = Long, y = Lat, color = Cruise)) +
