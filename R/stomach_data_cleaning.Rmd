@@ -1252,25 +1252,15 @@ unique(full_dat$comments)
 Now create a new sub-area that matches the benthic data. This is semi-arbitrary, loosely based on the subdivision boundaries (see make_pred_grid)
 
 ```{r add new sub-area, message=FALSE}
-# Now do a manual area, similar to sub divisions
-full_dat$sub_area <- as.numeric(full_dat$SubDiv)
-full_dat$sub_area <- as.factor(full_dat$sub_area)
+func <- 
+  getURL("https://raw.githubusercontent.com/maxlindmark/bentfish/main/R/functions/get_sub_area.R", 
+         ssl.verifypeer = FALSE)
 
-unique(full_dat$sub_area)
+eval(parse(text = func))
 
-full_dat <- full_dat %>% mutate(sub_area = fct_recode(sub_area,
-                                                      "1" = "24",
-                                                      "2" = "25",
-                                                      "3" = "26",
-                                                      "4" = "27",
-                                                      "5" = "28",
-                                                      "6" = "29"))
+full_dat <- get_sub_area(dat = full_dat, lat = full_dat$lat, lon = full_dat$lon)
 
-# Now modify them...
-full_dat <- full_dat %>%
-  mutate(sub_area = ifelse(Lat > 56.18 & Long < 18, "4", sub_area)) %>% 
-  mutate(sub_area = ifelse(Long > 17.6 & Lat >= 56.49, "5", sub_area)) %>% 
-  mutate(sub_area = ifelse(Long > 17 & Lat < 56.49, "3", sub_area))
+full_dat <- full_dat %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
 
 ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
 
