@@ -1,0 +1,1033 @@
+---
+title: "Joining benthic data"
+author: "Max Lindmark"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include = FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.asp = 0.618,
+  fig.align ='center'
+)
+```
+
+## Overview
+
+The goal with this script is to merge all benthic datasets to a complete
+one in a tidy format, where 1 row = 1 sample (by species).
+
+#### Benthic samples
+
+-   What happens here is that I first do a full join for abundance and
+    biomass data. Next I do a left join to add in taxonomic information
+    to easily navigate between the species and groups present in the
+    abundance and biomass data. Lastly, I do a left join with the
+    provinfo data to provide each sample ID with geographic coordinates.
+
+After that I show some basic exploratory plots that can be used as
+templates for exploring e.g. certain species or years in more detail,
+simply by applying different filters and data manipulations.
+
+The data were sent out by Mattias Sköld, and are also stored here in
+this RProject, as they came.
+
+Please help me out finding all the errors and loopholes! I have not
+worked with this data before.
+
+That said, let's start. First, read in some helpful packages:
+
+```{r read libs, warning=FALSE, message=FALSE}
+rm(list = ls()) # Clear console history (restart r for complete fresh start)
+
+# Load libraries (install first if needed)
+library(tidyverse)
+library(tidylog)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(RColorBrewer)
+library(forcats)
+library(gapminder)
+library(viridis)
+library(raster)
+library(ncdf4)
+library(chron)
+library(mapplots)
+library(RCurl)
+
+theme_set(theme_classic())
+
+# Quick and dirty way to plot spatial data
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+xlim <- c(12.99, 19.97) # c(min(dat$Longitud), max(dat$Longitud))
+ylim <- c(55.12, 60.39) # c(min(dat$Latitud), max(dat$Latitud))
+
+# Define a function for plotting maps...
+theme_map <- function () { 
+  theme(
+    text = element_text(size = 8),
+    legend.position = "bottom", 
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    axis.text = element_text(size = 6))
+}
+```
+
+Next start by collating and cleaning the benthic data
+
+## Benthic data
+
+Next we read in the data (abundans, biomass and provinfo) as they came
+and do so minor tidying up:
+
+```{r read data, warning=FALSE, message=FALSE}
+# I will read them as they came - tab delimited .txt files. 
+abun <- read_delim("data/benthic_data/abundans.txt",
+                    skip = 1, delim = "\t") # skip 1st row
+
+biom <- read_delim("data/benthic_data/biomassa.txt",
+                    skip = 1, delim = "\t") # skip 1st row
+
+# Remove the 4th column because it's empty in the data and only added with blank cells
+abun <- abun %>% dplyr::select(-"X4")
+biom <- biom %>% dplyr::select(-"X4")
+
+# The prov_info file does not have a header row
+# Also, open it first in Firefox, click view and find it's encoding. On my machine I
+# need to specify that manually. Therefore I use the function read.delim not read_delim
+# and convert it to a tibble afterwards
+prov_info <- read.delim("data/benthic_data/provinfo.txt",
+                        sep = "\t", fileEncoding= "windows-1252") 
+
+prov <- tibble(prov_info)
+
+# Inspect the structure of the datasets 
+str(abun)
+str(biom)
+
+# Biomass is continuous and separated by comma as a character. as.numeric won't do the trick
+head(biom$biomassa)
+biom$biomassa <- as.numeric(sub(",", ".", biom$biomassa, fixed = TRUE))
+head(biom$biomassa)
+
+str(prov)
+
+# Convert date in prov to date type
+prov$Datum <- as.Date(prov$Datum)
+```
+
+At this point, the data are already 1 row = 1 sample. It might come from
+the same station, however, so one idea is to aggregate this. If that's
+appropriate or not depends on how we use the data. I will not do it here
+for now.
+
+Now let's join the different datasets.
+
+Start with biomass and abundance and join by a unique id in order to get
+a single data.
+
+```{r join data, warning=FALSE, message=FALSE}
+# Which columns are *not* in the other data set?
+# The only columns that differ are "antal" and "biomass", so let's just do a left_join
+colnames(abun)[!colnames(abun) %in% colnames(biom)]
+colnames(biom)[!colnames(biom) %in% colnames(abun)]
+
+# Ensure that ID does not restart over year etc.
+length(unique(abun$provID))
+length(unique(paste(abun$provID, abun$artal)))
+
+length(unique(biom$provID))
+length(unique(paste(biom$provID, biom$artal)))
+
+# The data are of different lengths. There are more IDs in the abundance data
+
+# Create a new ID column that is the provID + taxa so that I can match in the data
+abun$id_yeartax <- paste(abun$provID, abun$taxa, sep = ".")
+biom$id_yeartax <- paste(biom$provID, biom$taxa, sep = ".")
+
+# Check that we only have one row per id!
+biom %>% 
+  group_by(id_yeartax) %>% 
+  summarise(n = n()) %>% 
+  distinct(n)
+
+abun %>% 
+  group_by(id_yeartax) %>% 
+  summarise(n = n()) %>% 
+  distinct(n)
+
+# Yes!
+
+# Now we can do the full_join to add biomass data as a column to the abundance dataset.
+# We don't do a left_join here because there are some rows that do not exist in the abundance data and vice versa (check below which ID's are *not* in the other data set).
+id_not_in_biom <- abun$id_yeartax[!abun$id_yeartax %in% biom$id_yeartax]
+id_not_in_abun <- biom$id_yeartax[!biom$id_yeartax %in% abun$id_yeartax]
+
+length(id_not_in_biom)
+length(id_not_in_abun)
+
+# The new data will be called "dat". First drop some non-needed columns in the biomass data
+biom_small <- biom %>% dplyr::select(biomassa, id_yeartax)
+
+dat <- full_join(abun, biom_small, by = "id_yeartax")
+# Now we got 98,044 rows, of which 95,925 are common id's (98,044 - 95,925 = length(id_not_in_biom) + length(id_not_in_abun))
+
+# Check it worked...
+nrow(dat)
+colnames(dat)
+
+# Check the 5th ID that is in the abun but not in the biom
+test_id <- id_not_in_biom[5]
+
+# Check in the abun data
+abun %>% filter(id_yeartax == test_id)
+biom %>% filter(id_yeartax == test_id)
+dat %>% filter(id_yeartax == test_id)
+
+# Looks correct!
+```
+
+Now I want the taxonomic information from the file "Mattias BenthFish
+artlista.xlsx". The goal is to have the columns "taxonID", "Stam",
+"Klass", "Ordning", "Familj" in the abun and biom data so that rookies
+with no taxonomic skills whatsoever like myself more easily can get an
+overview.
+
+```{r add taxa, warning=FALSE, message=FALSE}
+taxon_info <- readxl::read_xlsx("data/benthic_data/Mattias BenthFish artlista.xlsx")
+taxon_info
+
+# Now do a left_join to add the full taxon information to dat from taxon_info
+# (First copy the taxa column so that I can verify it after)
+dat$taxa_original <- dat$taxa
+dat <- left_join(dat, taxon_info, by = "taxa")
+
+# Check it worked
+dat %>% 
+  dplyr::select(c(taxa_original, colnames(taxon_info))) %>% 
+  dplyr::select(-c(Synonymer, Auktor, taxonID))  # Remove these for checking only
+```
+
+Lastly, we want provinfo data to be joined in as well to get e.g.
+coordinates
+
+```{r add sample info, warning=FALSE, message=FALSE}
+colnames(prov)
+colnames(dat)
+
+# We will save all information from here as I don't know what all columns mean. Here we use the provID as the key
+prov <- prov %>% dplyr::select(-artal, -djup, -Datum) # To not get double columns in new data
+dat <- left_join(dat, prov, by = "provID")
+
+str(dat)
+
+# Need to change the classes of coordinates
+head(dat$Latitud)
+dat$Latitud <- as.numeric(sub(",", ".", dat$Latitud, fixed = TRUE))
+head(dat$Latitud)
+
+dat$Longitud <- as.numeric(sub(",", ".", dat$Longitud, fixed = TRUE))
+
+# Remove NA-coordinates (22... hmm, could be ones that were not in the abundance data but not in the biomass data. Doesn't matter though!)
+dat <- dat %>% drop_na(c(Longitud, Latitud))
+```
+
+Split the date column so that it will be easier to by month subset later
+
+```{r split date column, message = FALSE}
+dat <- dat %>%
+  separate(datum, c("Year", "Month", "Day"), sep = "-") %>%
+  mutate(Year = as.numeric(Year),
+         Month = as.numeric(Month),
+         Day = as.numeric(Day))
+```
+
+Add in oceanographic variables. Start with oxygen
+
+```{r oxygen, message=FALSE, results="hide"}
+# # Oxygen 
+# # Loop through each year and extract the oxygen levels
+# # Downloaded from here: https://resources.marine.copernicus.eu/?option=com_csw&view=details&product_id=BALTICSEA_REANALYSIS_BIO_003_012
+# # Extract raster points: https://gisday.wordpress.com/2014/03/24/extract-raster-values-from-points-using-r/comment-page-1/
+# # https://rpubs.com/boyerag/297592
+# # https://pjbartlein.github.io/REarthSysSci/netCDF.html#get-a-variable
+# # Open the netCDF file
+# ncin <- nc_open("data/NEMO_Nordic_SCOBI/dataset-reanalysis-scobi-monthlymeans_1610091357600.nc")
+# 
+# print(ncin)
+# 
+# # Get longitude and latitude
+# lon <- ncvar_get(ncin,"longitude")
+# nlon <- dim(lon)
+# head(lon)
+# 
+# lat <- ncvar_get(ncin,"latitude")
+# nlat <- dim(lat)
+# head(lat)
+# 
+# # Get time
+# time <- ncvar_get(ncin,"time")
+# time
+# 
+# tunits <- ncatt_get(ncin,"time","units")
+# nt <- dim(time)
+# nt
+# tunits
+# 
+# # Get oxygen
+# dname <- "o2b"
+# 
+# oxy_array <- ncvar_get(ncin,dname)
+# dlname <- ncatt_get(ncin,dname,"long_name")
+# dunits <- ncatt_get(ncin,dname,"units")
+# fillvalue <- ncatt_get(ncin,dname,"_FillValue")
+# dim(oxy_array)
+# 
+# # Get global attributes
+# title <- ncatt_get(ncin,0,"title")
+# institution <- ncatt_get(ncin,0,"institution")
+# datasource <- ncatt_get(ncin,0,"source")
+# references <- ncatt_get(ncin,0,"references")
+# history <- ncatt_get(ncin,0,"history")
+# Conventions <- ncatt_get(ncin,0,"Conventions")
+# 
+# # Convert time: split the time units string into fields
+# tustr <- strsplit(tunits$value, " ")
+# tdstr <- strsplit(unlist(tustr)[3], "-")
+# tmonth <- as.integer(unlist(tdstr)[2])
+# tday <- as.integer(unlist(tdstr)[3])
+# tyear <- as.integer(unlist(tdstr)[1])
+# 
+# # Here I deviate from the guide a little bit. Save this info:
+# dates <- chron(time, origin = c(tmonth, tday, tyear))
+# 
+# # Crop the date variable
+# months <- as.numeric(substr(dates, 2, 3))
+# years <- as.numeric(substr(dates, 8, 9))
+# years <- ifelse(years > 90, 1900 + years, 2000 + years)
+# 
+# # Replace netCDF fill values with NA's
+# oxy_array[oxy_array == fillvalue$value] <- NA
+# 
+# # We only use Months 4-6 (quarter 2) in this analysis, so now we want to loop through each time step,
+# # and if it is a good month save it as a raster.
+# # First get the index of months that correspond to Q4
+# months
+# 
+# index_keep <- which(months > 3 & months < 7)
+# 
+# # Quarter 2 by keeping months in index_keep
+# oxy_q2 <- oxy_array[, , index_keep]
+# 
+# months_keep <- months[index_keep]
+# 
+# years_keep <- years[index_keep]
+# 
+# # Now we have an array with only Q2 data...
+# # We need to now calculate the average within a year.
+# # Get a sequence that takes every third value between 1: number of months (length)
+# loop_seq <- seq(1, dim(oxy_q2)[3], by = 3)
+# 
+# # Create objects that will hold data
+# dlist <- list()
+# oxy_4 <- c()
+# oxy_5 <- c()
+# oxy_6 <- c()
+# oxy_ave <- c()
+# 
+# # Loop through the vector sequence with every third value, then take the average of
+# # three consecutive months (i.e. q2)
+# for(i in loop_seq) {
+#   
+#   oxy_4 <- oxy_q2[, , (i)]
+#   oxy_5 <- oxy_q2[, , (i + 1)]
+#   oxy_6 <- oxy_q2[, , (i + 2)]
+#   
+#   oxy_ave <- (oxy_4 + oxy_5 + oxy_6) / 3
+#   
+#   list_pos <- ((i/3) - (1/3)) + 1 # to get index 1:n(years)
+#   
+#   dlist[[list_pos]] <- oxy_ave
+#   
+# }
+# 
+# # Now name the lists with the year:
+# # First rename some variables
+# dat$year <- dat$artal
+# dat$lat <- dat$Latitud
+# dat$lon <- dat$Longitud
+# 
+# names(dlist) <- unique(years_keep)
+# 
+# # Now I need to make a loop where I extract the raster value for each year...
+# 
+# # Filter years in the benthic data frame to only have the years I have oxygen for
+# d_sub_oxy <- dat %>% filter(year %in% names(dlist)) %>% droplevels()
+# 
+# # Now keep only the unique combinations of lat lon and year
+# d_sub_oxy <- d_sub_oxy %>% mutate(id_oxy = paste(lat, lon, year)) %>% distinct(id_oxy, .keep_all = TRUE)
+# 
+# # Create data holding object
+# data_list <- list()
+# 
+# # Create factor year for indexing the list in the loop
+# d_sub_oxy$year_f <- as.factor(d_sub_oxy$year)
+# 
+# # Loop through each year and extract raster values for the pred grid data points
+# for(i in unique(d_sub_oxy$year_f)) {
+#   
+#   # Subset a year
+#   oxy_slice <- dlist[[i]]
+#   
+#   # Create raster for that year (i)
+#   r <- raster(t(oxy_slice), xmn = min(lon), xmx = max(lon), ymn = min(lat), ymx = max(lat),
+#               crs = CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
+#   
+#   # Flip...
+#   r <- flip(r, direction = 'y')
+#   
+#   plot(r, main = i)
+#   
+#   # Filter the same year (i) in the pred-grid data and select only coordinates
+#   d_slice <- d_sub_oxy %>% filter(year_f == i) %>% dplyr::select(lon, lat)
+#   
+#   # Make into a SpatialPoints object
+#   data_sp <- SpatialPoints(d_slice)
+#   
+#   # Extract raster value (oxygen)
+#   rasValue <- raster::extract(r, data_sp)
+#   
+#   # Now we want to plot the results of the raster extractions by plotting the pred-grid
+#   # data points over a raster and saving it for each year.
+#   # Make the SpatialPoints object into a raster again (for pl)
+#   df <- as.data.frame(data_sp)
+#   
+#   # Add in the raster value in the df holding the coordinates for the pred-grid data
+#   d_slice$oxy <- rasValue
+#   
+#   # Add in which year
+#   d_slice$year <- i
+#   
+#   # Create a index for the data last where we store all years (because our loop index
+#   # i is not continuous, we can't use it directly)
+#   index <- as.numeric(d_slice$year)[1] - 1992
+#   
+#   # Add each years' data in the list
+#   data_list[[index]] <- d_slice
+#   
+# }
+# 
+# # Now create a data frame from the list of all annual values
+# pred_grid_oxy <- dplyr::bind_rows(data_list)
+# 
+# lims <- pred_grid_oxy %>% drop_na(oxy) %>% summarise(min = min(oxy),
+#                                                      max = max(oxy))
+# 
+# # Plot and compare with rasters
+# ggplot(pred_grid_oxy, aes(lon, lat, color = oxy)) + 
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
+#   
+# # Left join in with the benthic again
+# # First make the same selection of years in pred-grid 2
+# # sort(unique(dat$year))
+# 
+# pred_grid_oxy <- pred_grid_oxy %>% mutate(id_oxy = paste(year, lon, lat)) %>% dplyr::select(-year, -lon, -lat)
+# 
+# dat <- dat %>% mutate(id_oxy = paste(year, lon, lat))
+# 
+# # Add in oxygen
+# nrow(dat)
+# dat <- left_join(dat, pred_grid_oxy)
+# nrow(dat)
+#      
+# ggplot(dat, aes(lon, lat, color = oxy)) + 
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
+```
+
+Now do temperature
+
+```{r temperature, message=FALSE, results="hide"}
+# # Open the netCDF file
+# ncin <- nc_open("data/NEMO_Nordic_SCOBI/dataset-reanalysis-nemo-monthlymeans_1608127623694.nc")
+# 
+# print(ncin)
+# 
+# # Get longitude and latitude
+# lon <- ncvar_get(ncin,"longitude")
+# nlon <- dim(lon)
+# head(lon)
+# 
+# lat <- ncvar_get(ncin,"latitude")
+# nlat <- dim(lat)
+# head(lat)
+# 
+# # Get time
+# time <- ncvar_get(ncin,"time")
+# time
+# 
+# tunits <- ncatt_get(ncin,"time","units")
+# nt <- dim(time)
+# nt
+# tunits
+# 
+# # Get temperature
+# dname <- "bottomT"
+# 
+# temp_array <- ncvar_get(ncin,dname)
+# dlname <- ncatt_get(ncin,dname,"long_name")
+# dunits <- ncatt_get(ncin,dname,"units")
+# fillvalue <- ncatt_get(ncin,dname,"_FillValue")
+# dim(temp_array)
+# 
+# # Get global attributes
+# title <- ncatt_get(ncin,0,"title")
+# institution <- ncatt_get(ncin,0,"institution")
+# datasource <- ncatt_get(ncin,0,"source")
+# references <- ncatt_get(ncin,0,"references")
+# history <- ncatt_get(ncin,0,"history")
+# Conventions <- ncatt_get(ncin,0,"Conventions")
+# 
+# # Convert time: split the time units string into fields
+# tustr <- strsplit(tunits$value, " ")
+# tdstr <- strsplit(unlist(tustr)[3], "-")
+# tmonth <- as.integer(unlist(tdstr)[2])
+# tday <- as.integer(unlist(tdstr)[3])
+# tyear <- as.integer(unlist(tdstr)[1])
+# 
+# # Here I deviate from the guide a little bit. Save this info:
+# dates <- chron(time, origin = c(tmonth, tday, tyear))
+# 
+# # Crop the date variable
+# months <- as.numeric(substr(dates, 2, 3))
+# years <- as.numeric(substr(dates, 8, 9))
+# years <- ifelse(years > 90, 1900 + years, 2000 + years)
+# 
+# # Replace netCDF fill values with NA's
+# temp_array[temp_array == fillvalue$value] <- NA
+# 
+# # We only use Quarter 2 in this analysis, so now we want to loop through each time step,
+# # and if it is a good month save it as a raster.
+# # First get the index of months that correspond to Q2
+# months
+# 
+# index_keep <- which(months > 3 & months < 7)
+# 
+# # Quarter 2 by keeping months in index_keep
+# temp_q2 <- temp_array[, , index_keep]
+# 
+# months_keep <- months[index_keep]
+# 
+# years_keep <- years[index_keep]
+# 
+# # Now we have an array with only Q2 data...
+# # We need to now calculate the average within a year.
+# # Get a sequence that takes every third value between 1: number of months (length)
+# loop_seq <- seq(1, dim(temp_q2)[3], by = 3)
+# 
+# # Create objects that will hold data
+# dlist <- list()
+# temp_4 <- c()
+# temp_5 <- c()
+# temp_6 <- c()
+# temp_ave <- c()
+# 
+# # Loop through the vector sequence with every third value, then take the average of
+# # three consecutive months (i.e. q2)
+# for(i in loop_seq) {
+#   
+#   temp_4<- temp_q2[, , (i)]
+#   temp_5 <- temp_q2[, , (i + 1)]
+#   temp_6 <- temp_q2[, , (i + 2)]
+#   
+#   temp_ave <- (temp_4 + temp_5 + temp_6) / 3
+#   
+#   list_pos <- ((i/3) - (1/3)) + 1 # to get index 1:n(years)
+#   
+#   dlist[[list_pos]] <- temp_ave
+#   
+# }
+# 
+# # Now name the lists with the year:
+# names(dlist) <- unique(years_keep)
+# 
+# # Filter years in the pred-grid data frame to only have the years I have temperature for
+# d_sub_temp <- dat %>% filter(year %in% names(dlist)) %>% droplevels()
+# 
+# # Now keep only the unique combinations of lat lon and year
+# d_sub_temp <- d_sub_temp %>% mutate(id_temp = paste(lat, lon, year)) %>% distinct(id_temp, .keep_all = TRUE)
+# 
+# # Create data holding object
+# data_list <- list()
+# 
+# # Create factor year for indexing the list in the loop
+# d_sub_temp$year_f <- as.factor(d_sub_temp$year)
+# 
+# # Loop through each year and extract raster values for the pred-grid data points
+# for(i in unique(d_sub_temp$year_f)) {
+#   
+#   # Subset a year
+#   temp_slice <- dlist[[i]]
+#   
+#   # Create raster for that year (i)
+#   r <- raster(t(temp_slice), xmn = min(lon), xmx = max(lon), ymn = min(lat), ymx = max(lat),
+#               crs = CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
+#   
+#   # Flip...
+#   r <- flip(r, direction = 'y')
+#   
+#   plot(r, main = i)
+#   
+#   # Filter the same year (i) in the pred-grid data and select only coordinates
+#   d_slice <- d_sub_temp %>% filter(year_f == i) %>% dplyr::select(lon, lat)
+#   
+#   # Make into a SpatialPoints object
+#   data_sp <- SpatialPoints(d_slice)
+#   
+#   # Extract raster value (temperature)
+#   rasValue <- raster::extract(r, data_sp)
+#   
+#   # Now we want to plot the results of the raster extractions by plotting the pred-grid
+#   # data points over a raster and saving it for each year.
+#   # Make the SpatialPoints object into a raster again (for pl)
+#   df <- as.data.frame(data_sp)
+#   
+#   # Add in the raster value in the df holding the coordinates for the pred-grid data
+#   d_slice$temp <- rasValue
+#   
+#   # Add in which year
+#   d_slice$year <- i
+#   
+#   # Create a index for the data last where we store all years (because our loop index
+#   # i is not continuous, we can't use it directly)
+#   index <- as.numeric(d_slice$year)[1] - 1992
+#   
+#   # Add each years' data in the list
+#   data_list[[index]] <- d_slice
+#   
+# }
+# 
+# # Now create a data frame from the list of all annual values
+# pred_grid_temp <- dplyr::bind_rows(data_list)
+# 
+# lims <- pred_grid_temp %>% drop_na(temp) %>% summarise(min = min(temp),
+#                                                        max = max(temp))
+# 
+# # Plot and compare with rasters
+# ggplot(pred_grid_temp, aes(lon, lat, color = temp)) +
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
+# 
+# # Left join in with the benthic again
+# # First make the same selection of years in pred-grid 2
+# # sort(unique(dat$year))
+# 
+# pred_grid_temp <- pred_grid_temp %>% mutate(id_temp = paste(year, lon, lat)) %>% dplyr::select(-year, -lon, -lat)
+# 
+# dat <- dat %>% mutate(id_temp = paste(year, lon, lat))
+# 
+# # left_join in temperature
+# nrow(dat)
+# dat <- left_join(dat, pred_grid_temp)
+# nrow(dat)
+# 
+# ggplot(dat, aes(lon, lat, color = temp)) +
+#   facet_wrap(~year) +
+#   scale_colour_gradientn(colours = rev(terrain.colors(10)),
+#                          limits = c(lims$min, lims$max)) +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2, alpha = 0) +
+#   coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+#   geom_point(size = 0.1) +
+#   NULL
+```
+
+Add in ICES areas information
+
+```{r add ICES areas, message=FALSE, results="hide"}
+# Add in sub_area into data
+# Load function
+func <- 
+  getURL("https://raw.githubusercontent.com/maxlindmark/bentfish/main/R/functions/get_sub_area.R", 
+         ssl.verifypeer = FALSE)
+
+eval(parse(text = func))
+
+dat <- get_sub_area(dat = dat, lat = dat$Latitud, lon = dat$Longitud)
+
+dat <- dat %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
+
+ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
+
+ggplot(dat, aes(x = Longitud, y = Latitud, color = sub_area)) +
+  geom_point(size = 0.5) +
+  coord_cartesian(expand = 0) +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  theme_classic(base_size = 20) +
+  NULL
+
+ggsave("figures/sub_areas_benthicdata.png", width = 9, height = 9, dpi = 600)
+```
+
+Now add in the species 
+
+**Flounder**: Amphipoda, *Saduria entomon*, *Mytilus sp.*, *Limecola
+balthica*, "Other inverts"
+
+**Cod**: Polychaeta, Cumacea, *Saduria entomon*, Mysida, "Other inverts"
+
+Let's now make a new category based on the above (I suggest using "Other
+inverts" as all remaining taxa):
+
+```{r make new species group, warning=FALSE, message=FALSE}
+# First decide how to subset the data to fit the above categories
+# Flounder
+filter(dat, Ordning == "Amphipoda") # This is easy
+filter(dat, taxa == "Saduria entomon") # This is easy
+unique(filter(dat, Ordning == "Mytiloida")$taxa) # For Mytilus sp. we can use the "Ordning" Mytiloida
+filter(dat, taxa == "Limecola balthica") # This is also easy
+
+# Cod
+filter(dat, Klass == "Polychaeta") # Easy
+filter(dat, Ordning == "Cumacea") # Easy
+filter(dat, Ordning == "Mysida"); filter(dat, Familj == "Mysidae")  # Not sure how to deal with this one, maybe there aren't any in the data. Skip for now
+
+# Ok, based on the species groups, create a new variable for grouping taxa based in importance in cod and flounder diets
+dat <- dat %>% 
+  mutate(species_group = "Other inverts") %>% 
+  mutate(species_group = ifelse(Ordning == "Amphipoda", "Amphipoda", species_group),
+         species_group = ifelse(taxa == "Saduria entomon", "Saduria entomon", species_group),
+         species_group = ifelse(Ordning == "Mytiloida", "Mytiloida", species_group),
+         species_group = ifelse(taxa == "Limecola balthica", "Limecola balthica", species_group),
+         species_group = ifelse(Klass == "Polychaeta", "Polychaeta", species_group),
+         species_group = ifelse(Ordning == "Cumacea", "Cumacea", species_group)) %>% 
+  mutate(species_group = ifelse(is.na(species_group) == TRUE, "Other inverts", species_group)) %>% # Replace the NA with other inverts, because that's where they belong...
+  mutate(species_group = factor(species_group))
+```
+
+Finally add in depth:
+Now add in the depth based on a raster (so that it's identical to the
+prediction grid)
+
+```{r add depth, message=FALSE, hide=TRUE}
+west <- raster("data/depth_geo_tif/D5_2018_rgb-1.tif")
+#plot(west)
+
+east <- raster("data/depth_geo_tif/D6_2018_rgb-1.tif")
+#plot(east)
+
+dep_rast <- raster::merge(west, east)
+
+dat$depth_rast <- extract(dep_rast, dat[, 29:28])
+
+# Convert to depth (instead of elevation)
+ggplot(dat, aes(depth_rast)) + geom_histogram()
+dat$depth_rast <- (dat$depth_rast - max(dat$depth_rast)) *-1
+ggplot(dat, aes(depth_rast)) + geom_histogram()
+
+# Compare to built in depth data
+ggplot(dat, aes(djup, depth_rast)) + 
+  geom_point() +
+  geom_abline(color = "red")
+
+ymin = 54; ymax = 58; xmin = 9.5; xmax = 22
+
+dat %>% 
+  filter(depth_rast > 0) %>% 
+  ggplot(., aes(Longitud, Latitud, color = depth_rast)) + 
+  scale_color_viridis() +
+  geom_sf(data = world, inherit.aes = F, size = 0.2, fill = NA) +
+  geom_point(size = 1) + 
+  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+  NULL
+```
+
+We can now save this complete data set to avoid having to run all this
+code again
+
+```{r save data, message=FALSE}
+# Subset the data a little bit
+dat2 <- dat %>%
+  rename("depth" = "depth_rast",
+         "abundance" = "antal",
+         "biomass" = "biomassa",
+         "month" = "Month",
+         "day" = "Day",
+         "year" = "artal",
+         "lon" = "Longitud",
+         "lat" = "Latitud") %>% 
+  dplyr::select(year, month, day, lon, lat, abundance, biomass, species_group, depth, prov_nr, provID, sub_area, SubDiv, taxa)
+
+# Now we can save the data
+write.csv(dat2, "data/benthic_data_complete.csv")
+```
+
+After that, we can also do some visual exploration of the data
+
+```{r explore, fig.align="center", warning=FALSE, message=FALSE}
+colnames(dat)
+
+# Color by taxonomic information
+# Expand color palette
+colourCount = length(unique(dat$Ordning))
+getPalette = colorRampPalette(brewer.pal(9, "Set2"))
+
+# Frequency by Stam fill by Klass in data
+dat %>%
+  ggplot(., aes(x = forcats::fct_infreq(Stam), fill = Klass)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Stam/Klass") +
+  xlab("Stam") +
+  NULL
+
+# Frequency by Klass fill by Ordning in data
+dat %>%
+  ggplot(., aes(x = forcats::fct_infreq(Klass), fill = Ordning)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Filter the most common "Klass" and plot by year
+common_class <- 
+  c("Bivalvia", "Gastropoda", "Insecta", "Malacostraca", " Polychaeta", "Enopla")
+
+# We'll split this plot into 2 to get a better view
+
+# Plot 1/2
+dat %>%
+  filter(Klass %in% common_class & artal < 1999) %>% 
+  ggplot(., aes(x = forcats::fct_infreq(Klass), fill = Ordning)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  facet_wrap(~artal) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Plot 2/2
+dat %>%
+  filter(Klass %in% common_class & artal > 1999) %>% 
+  ggplot(., aes(x = forcats::fct_infreq(Klass), fill = Ordning)) +
+  geom_bar(color = "grey1", size = 0.1) +
+  facet_wrap(~artal) +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Occurence in data Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Biomass by Klass fill by Ordning in data
+dat %>%
+  drop_na("biomassa") %>% 
+  group_by(Klass, Ordning) %>% 
+  summarise(tot_bio = sum(biomassa)) %>% 
+  ggplot(., aes(x = reorder(Klass, -tot_bio, sum), y = tot_bio, fill = Ordning)) +
+  geom_bar(stat = "identity") +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Biomass Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+# Abundance by Klass fill by Ordning in data
+dat %>%
+  drop_na("antal") %>% 
+  group_by(Klass, Ordning) %>% 
+  summarise(tot_abund = sum(antal)) %>% 
+  ggplot(., aes(x = reorder(Klass, -tot_abund, sum), y = tot_abund, fill = Ordning)) +
+  geom_bar(stat = "identity") +
+  coord_cartesian(expand = 0) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  ggtitle("Abundance Klass/Ordning") +
+  xlab("Klass") +
+  NULL
+
+#... And many more plots can be made like this, just change filters and variables
+```
+
+We can also plot the data on maps...
+
+```{r plot maps, warning=FALSE, message=FALSE}
+# Plot sample intensity in space and time
+dat %>%
+  filter(Klass %in% common_class) %>%
+  distinct(provID, .keep_all = T) %>%
+  ggplot(., aes(x = Longitud, y = Latitud)) +
+    geom_point(size = 0.1, color = "red") +
+    facet_wrap(~artal, ncol = 10) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Locations of samples (all)") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    NULL
+```
+
+We can also plot time series by station, and for species groups used in
+Haase *et al.* (2020) for describing the diet of cod and flounder
+
+More plots...
+
+```{r more sample plots, message=FALSE}
+# Plot the annual average of the total biomass of the species_group within a sample
+dat %>% 
+  group_by(species_group, artal, provID) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  group_by(species_group, artal) %>% # Now average these by year and by species
+  mutate(ave_biomass = mean(tot_biomass_sample)) %>% # Calculate mean of total biomass by species group per unique sample
+  ungroup() %>% 
+  ggplot(., aes(artal, ave_biomass, fill = species_group)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_brewer(palette = "Set2")
+
+# Same as above but with abundance
+dat %>% 
+  group_by(species_group, artal, provID) %>% 
+  drop_na(antal) %>% 
+  summarise(tot_abun_sample = sum(antal)) %>% 
+  ungroup() %>% 
+  group_by(species_group, artal) %>%
+  mutate(ave_abun = mean(tot_abun_sample)) %>%
+  ungroup() %>% 
+  ggplot(., aes(artal, ave_abun, fill = species_group)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_brewer(palette = "Set2")
+
+# Looks like something happened in ~1980 - likely due to spatial extent of sampling increasing introducing a bias
+
+# Plot normalized biomasses on a map from 2015 and forward (from when we have data on both cod and flounder diets)
+dat %>%
+  filter(!species_group == "Other inverts") %>% 
+  group_by(species_group, artal, Latitud, Longitud) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  filter(artal > 2014) %>% 
+  filter(species_group %in% unique(species_group)[1:3]) %>% 
+  group_by(species_group) %>% 
+  mutate(max_tot_biomass = max(tot_biomass_sample)) %>%
+  ungroup() %>% 
+  mutate(tot_biomass_sample_norm = tot_biomass_sample / max_tot_biomass) %>% 
+  ggplot(., aes(x = Longitud, y = Latitud, color = log(tot_biomass_sample_norm))) +
+    geom_point() +
+    facet_grid(species_group ~ artal) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Biomass normalized to max biomass by species group and location") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    scale_color_viridis() +
+    NULL
+
+# Same plot for the remaining species groups
+dat %>%
+  filter(!species_group == "Other inverts") %>% 
+  group_by(species_group, artal, Latitud, Longitud) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  filter(artal > 2014) %>% 
+  filter(species_group %in% unique(species_group)[4:6]) %>% 
+  group_by(species_group) %>% 
+  mutate(max_tot_biomass = max(tot_biomass_sample)) %>%
+  ungroup() %>% 
+  mutate(tot_biomass_sample_norm = tot_biomass_sample / max_tot_biomass) %>% 
+  ggplot(., aes(x = Longitud, y = Latitud, color = log(tot_biomass_sample_norm))) +
+    geom_point() +
+    facet_grid(species_group ~ artal) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Biomass normalized to max biomass by species group and location") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    scale_color_viridis() +
+    NULL
+
+# Plot samples of saduria for all years
+dat %>%
+  filter(species_group == "Saduria entomon") %>%
+  group_by(artal, Latitud, Longitud) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  mutate(max_tot_biomass = max(tot_biomass_sample)) %>%
+  ungroup() %>% 
+  mutate(tot_biomass_sample_norm = tot_biomass_sample / max_tot_biomass) %>% 
+  ggplot(., aes(x = Longitud, y = Latitud, color = log(tot_biomass_sample_norm))) +
+    geom_point() +
+    facet_wrap(~ artal, ncol = 10) +
+    coord_cartesian(expand = 0) +
+    geom_sf(data = world, inherit.aes = F, size = 0.2) +
+    coord_sf(xlim = xlim, ylim = ylim) + 
+    ggtitle("Biomass normalized to max biomass across samples") +
+    theme_map() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    scale_color_viridis() +
+    NULL
+
+# Plot time series of the annual average of the total biomass in each sample by species_group. This assumes sampling locations haven't changed in a way leading to bias.
+# Filter years after 1983 because of the low sample size before that
+dat %>% 
+  filter(!species_group == "Other inverts") %>% 
+  group_by(species_group, artal, provID) %>% 
+  drop_na(biomassa) %>% 
+  summarise(tot_biomass_sample = sum(biomassa)) %>% 
+  ungroup() %>% 
+  group_by(species_group, artal) %>% # Now average these by year and by species group
+  mutate(ave_biomass = mean(tot_biomass_sample)) %>% # Calculate the annual mean of total biomass by species group per unique sample
+  ungroup() %>%
+  filter(artal > 1983) %>% 
+  ggplot(., aes(x = artal, y = ave_biomass, color = species_group)) +
+    geom_point(size = 2) +
+    stat_smooth(formula = y ~ s(x, bs = "cs", k = 3)) +
+    facet_wrap(~ species_group, scales = "free_y") +
+    coord_cartesian(expand = 0) +
+    theme(aspect.ratio = 1, legend.position = "bottom") +
+    scale_color_brewer(palette = "Set2") +
+    NULL
+```

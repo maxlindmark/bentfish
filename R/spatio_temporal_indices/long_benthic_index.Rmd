@@ -1,0 +1,934 @@
+---
+title: "Long spatiotemporal indices of biomass density by benthic species group"
+author: "Max Lindmark"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+  df_print: paged
+pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+  
+```{r setup, include = FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.asp = 0.618,
+  fig.align ='center'
+)
+```
+
+## Load libraries
+```{r libraries, message=FALSE}
+# Load libraries, install if needed
+library(tidyverse); theme_set(theme_classic())
+library(readxl)
+library(tidylog)
+library(RCurl)
+library(sp)
+library(geosphere)
+library(viridis)
+library(RColorBrewer)
+library(patchwork)
+library(janitor)
+library(icesDatras)
+library(mapdata)
+library(patchwork)
+library(rgdal)
+library(raster)
+library(sf)
+library(rgeos)
+library(chron)
+library(lattice)
+library(ncdf4)
+library(sdmTMB) # remotes::install_github("pbs-assess/sdmTMB")
+library(marmap)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(mapplots)
+library(mgcv)
+library(qwraps2) # To load entire cache in interactive r session, do: qwraps2::lazyload_cache_dir(path = "R/spatio_temporal_indices/long_benthic_index_cache/html")
+
+# For adding maps to plots
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Specify map ranges
+ymin = 55.5; ymax = 58; xmin = 12.5; xmax = 20
+```
+
+
+# Saduria
+Read data
+
+```{r sad data, message=FALSE}
+# sad <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/saduria.csv") %>%
+#   dplyr::select(-X1)
+sad <- read.csv("data/for_analysis/saduria.csv") %>% dplyr::select(-X)
+
+sad <- sad %>%
+  filter(year > 1985) %>% 
+  mutate(SubDiv = as.factor(SubDiv)) %>% 
+  filter(SubDiv %in% c(25, 27, 28)) %>% 
+  mutate(year_f = as.factor(year_f),
+         depth_scaled_sq = depth_scaled*depth_scaled)
+
+# Split data by subdivison
+sad25 <- sad %>% filter(SubDiv == "25")
+sad25 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(sad25, aes(lon, lat, color = biomass)) + geom_point()
+ggplot(sad25, aes(biomass)) + geom_histogram()
+
+sad27 <- sad %>% filter(SubDiv == "27" & lon < 17.4)
+sad27 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(sad27, aes(lon, lat, color = biomass)) + geom_point()
+ggplot(sad27, aes(biomass)) + geom_histogram()
+
+# remove outlier and see if model improves
+sad27 <- sad27 %>% filter(biomass < 80)
+
+sad28 <- sad %>% filter(SubDiv == "28")
+sad28 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(sad28, aes(biomass)) + geom_histogram()
+
+sad28 <- sad28 %>% filter(year > 2005)
+
+# remove data points wiht more than 50 g/m2
+sad25 <- sad25 %>% filter(biomass < 80)
+sad27 <- sad27 %>% filter(biomass < 80)
+sad28 <- sad28 %>% filter(biomass < 80)
+```
+
+Read and crop pred grid to match saduria
+
+Fit models using `sdmTMB` assuming a Tweedie distribution and biomass as the response.
+
+Make spde mesh
+
+```{r make sad barrier spde mesh, results='hide', cache=TRUE, message=FALSE}
+# Non-island version
+sad_spde25 <- make_mesh(data = sad25, xy_cols = c("lon", "lat"), n_knots = 50, type = "kmeans", seed = 42)
+
+sad_spde27 <- make_mesh(data = sad27, xy_cols = c("lon", "lat"), n_knots = 40, type = "kmeans", seed = 42)
+
+sad_spde28 <- make_mesh(data = sad28, xy_cols = c("lon", "lat"), n_knots = 20, type = "kmeans", seed = 42)
+```
+
+Fit the models
+
+```{r fit sad tweedie model, cache=TRUE}
+m_sad25 <- sdmTMB(formula = biomass ~ year_f - 1 + depth_scaled + depth_scaled_sq, data = sad25,
+                  time = "year", spde = sad_spde25, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+m_sad27 <- sdmTMB(formula = biomass ~ year_f - 1 + depth_scaled + depth_scaled_sq, data = sad27,
+                  time = "year", spde = sad_spde27, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+m_sad28 <- sdmTMB(formula = biomass ~ year_f - 1 + depth_scaled + depth_scaled_sq, data = sad28,
+                  time = "year", spde = sad_spde28, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+# Check residuals
+sad25$residuals <- residuals(m_sad25)
+sad27$residuals <- residuals(m_sad27)
+sad28$residuals <- residuals(m_sad28)
+
+# Pretty good!
+qqnorm(sad25$residuals); abline(a = 0, b = 1)
+qqnorm(sad27$residuals); abline(a = 0, b = 1)
+qqnorm(sad28$residuals); abline(a = 0, b = 1)
+
+# Plot the marginal effect of depth:
+# SD 25
+nd_sad25 <- data.frame(depth_scaled = seq(min(sad25$depth_scaled), max(sad25$depth_scaled), length.out = 100))
+nd_sad25$depth_scaled_sq <- nd_sad25$depth_scaled*nd_sad25$depth_scaled
+nd_sad25$year <- as.integer(max(sad25$year))
+nd_sad25$year_f <- factor(nd_sad25$year)
+
+p_sad25 <- predict(m_sad25, newdata = nd_sad25, se_fit = TRUE, re_form = NA)
+
+ggplot(p_sad25, aes(depth_scaled, exp(est),
+                    ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+  geom_line() + geom_ribbon(alpha = 0.4)
+
+# SD 27
+nd_sad27 <- data.frame(depth_scaled = seq(min(sad27$depth_scaled), max(sad27$depth_scaled), length.out = 100))
+nd_sad27$depth_scaled_sq <- nd_sad27$depth_scaled*nd_sad27$depth_scaled
+nd_sad27$year <- as.integer(max(sad27$year))
+nd_sad27$year_f <- factor(nd_sad27$year)
+
+p_sad27 <- predict(m_sad27, newdata = nd_sad27, se_fit = TRUE, re_form = NA)
+
+ggplot(p_sad27, aes(depth_scaled, exp(est),
+                    ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+  geom_line() + geom_ribbon(alpha = 0.4)
+
+# SD 28
+nd_sad28 <- data.frame(depth_scaled = seq(min(sad28$depth_scaled), max(sad28$depth_scaled), length.out = 100))
+nd_sad28$depth_scaled_sq <- nd_sad28$depth_scaled*nd_sad28$depth_scaled
+nd_sad28$year <- as.integer(max(sad28$year))
+nd_sad28$year_f <- factor(nd_sad28$year)
+
+p_sad28 <- predict(m_sad28, newdata = nd_sad28, se_fit = TRUE, re_form = NA)
+
+ggplot(p_sad28, aes(depth_scaled, exp(est),
+                    ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+  geom_line() + geom_ribbon(alpha = 0.4)
+```
+
+Read in the prediction grids
+Read and crop pred grid to match saduria
+
+```{r crop pred grid for saduria, message=FALSE, warning=FALSE}
+## Read the prediction grid
+# pred_grid <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/pred_grid.csv")
+pred_grid <- read.csv("data/for_analysis/pred_grid.csv")
+
+pred_grid <- pred_grid %>%
+  mutate(depth_scaled = (depth - mean(sad$depth))/sd(sad$depth)) %>% 
+  mutate(depth_scaled_sq = depth_scaled*depth_scaled) %>% 
+  mutate(year_f = factor(year),
+         year = as.integer(year))
+
+# Subset the prediction grid to match saduria data
+pred_grid_sad25 <- pred_grid %>% filter(SubDiv == "25" & year %in% c(unique(sad25$year)))
+pred_grid_sad27 <- pred_grid %>% filter(SubDiv == "27" & year %in% c(unique(sad27$year)))
+pred_grid_sad28 <- pred_grid %>% filter(SubDiv == "28" & year %in% c(unique(sad28$year)))
+
+tf_sad25 <- exclude.too.far(pred_grid_sad25$lon, pred_grid_sad25$lat, sad$lon, sad$lat, 0.05) # 0.03 seems reasonable
+tf_sad27 <- exclude.too.far(pred_grid_sad27$lon, pred_grid_sad27$lat, sad$lon, sad$lat, 0.05) # 0.03 seems reasonable
+tf_sad28 <- exclude.too.far(pred_grid_sad28$lon, pred_grid_sad28$lat, sad$lon, sad$lat, 0.05) # 0.03 seems reasonable
+
+# Filter the grid points that are not too far from the data
+pred_grid_sad25$too_far <- tf_sad25
+pred_grid_sad27$too_far <- tf_sad27
+pred_grid_sad28$too_far <- tf_sad28
+
+# Plot again
+pred_grid_sad25 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = sad25, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_sad27 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = sad27, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_sad28 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = sad28, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+```
+
+Now calculate the index by year and sub area
+
+```{r calculate sad index, cache=TRUE, message=FALSE}
+# From these models, predict annual biomass for each sub area
+# sort(unique(sad$SubDiv))
+
+# Sub division 25
+sad_preds25 <- predict(m_sad25, pred_grid_sad25, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+sad_ind25 <- get_index(sad_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells25 <- pred_grid_sad25 %>% filter(year == 2015 & SubDiv == 25) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells25
+sad_ind25 <- sad_ind25 %>% mutate(est = est/ncells25, lwr = lwr/ncells25, upr = upr/ncells25, SubDiv = 25)
+
+
+# Sub division 27
+sad_preds27 <- predict(m_sad27, pred_grid_sad27, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+sad_ind27 <- get_index(sad_preds27, bias_correct = F) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells27 <- pred_grid_sad27 %>% filter(year == 2015 & SubDiv == 27) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells27
+sad_ind27 <- sad_ind27 %>% mutate(est = est/ncells27, lwr = lwr/ncells27, upr = upr/ncells27, SubDiv = 27)
+
+
+# Sub division 28
+sad_preds28 <- predict(m_sad28, pred_grid_sad28, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+sad_ind28 <- get_index(sad_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells28 <- pred_grid_sad28 %>% filter(year == 2015 & SubDiv == 28) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells28
+sad_ind28 <- sad_ind28 %>% mutate(est = est/ncells28, lwr = lwr/ncells28, upr = upr/ncells28, SubDiv = 28)
+
+
+# Merge prediction-data
+sad_preds <- bind_rows(sad_ind25, sad_ind27, sad_ind28) %>% mutate(SubDiv = factor(SubDiv))
+
+# Compare to data quickly
+p <- sad_preds %>%
+  dplyr::select(year, est, upr, lwr, SubDiv) %>%
+  mutate(source = "pred") %>% 
+  arrange(year, SubDiv)
+
+d <- sad %>%
+  group_by(year, SubDiv) %>% 
+  summarise(est = mean(biomass),
+            sd = sd(biomass)) %>%
+  mutate(source = "data") %>% 
+  arrange(year, SubDiv)
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = est-sd, ymax = est+sd)) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.4) + 
+  theme_classic(base_size = 15) + 
+  ggtitle("Saduria")
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) + 
+  geom_errorbar(aes(ymin = est-sd, ymax = est+sd)) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  theme_classic(base_size = 15) + 
+  ggtitle("Saduria")
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  theme_classic(base_size = 15) + 
+  ggtitle("Saduria")
+```
+
+# Polychaeta
+Read data
+
+```{r pol data, message=FALSE}
+# pol <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/polychaeta.csv") %>%
+#   dplyr::select(-X1)
+pol <- read.csv("data/for_analysis/polychaeta.csv") %>% dplyr::select(-X)
+
+pol <- pol %>%
+  filter(year > 1985) %>% 
+  mutate(SubDiv = as.factor(SubDiv)) %>% 
+  filter(SubDiv %in% c(25, 27, 28)) %>% 
+  mutate(year_f = as.factor(year_f),
+         depth_scaled_sq = depth_scaled*depth_scaled)
+
+# Split data by subdivison
+pol25 <- pol %>% filter(SubDiv == "25")
+pol25 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(pol25, aes(lon, lat, color = biomass)) + geom_point()
+ggplot(pol25, aes(biomass)) + geom_histogram()
+
+pol27 <- pol %>% filter(SubDiv == "27" & lon < 17.4)
+pol27 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(pol27, aes(lon, lat, color = biomass)) + geom_point()
+ggplot(pol27, aes(biomass)) + geom_histogram()
+
+pol28 <- pol %>% filter(SubDiv == "28")
+pol28 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(pol28, aes(biomass)) + geom_histogram()
+
+pol28 <- pol28 %>% filter(year > 2005)
+
+# remove data points with more than 80 g/m2
+pol25 <- pol25 %>% filter(biomass < 100)
+pol27 <- pol27 %>% filter(biomass < 100)
+pol28 <- pol28 %>% filter(biomass < 80)
+```
+
+Read and crop pred grid to match polychaeta
+
+Fit models using `sdmTMB` assuming a Tweedie distribution and biomass as the response.
+
+Make spde mesh
+
+```{r make pol barrier spde mesh, results='hide', cache=TRUE, message=FALSE}
+# Non-island version
+pol_spde25 <- make_mesh(data = pol25, xy_cols = c("lon", "lat"), n_knots = 50, type = "kmeans", seed = 42)
+
+pol_spde27 <- make_mesh(data = pol27, xy_cols = c("lon", "lat"), n_knots = 45, type = "kmeans", seed = 42)
+
+pol_spde28 <- make_mesh(data = pol28, xy_cols = c("lon", "lat"), n_knots = 20, type = "kmeans", seed = 42)
+```
+
+Fit the models    
+
+```{r fit pol tweedie model, cache=TRUE}
+m_pol25 <- sdmTMB(formula = biomass ~ year_f - 1, data = pol25,
+                  time = "year", spde = pol_spde25, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+m_pol27 <- sdmTMB(formula = biomass ~ year_f - 1, data = pol27,
+                  time = "year", spde = pol_spde27, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+m_pol28 <- sdmTMB(formula = biomass ~ year_f - 1, data = pol28,
+                  time = "year", spde = pol_spde28, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+# Check residuals
+pol25$residuals <- residuals(m_pol25)
+pol27$residuals <- residuals(m_pol27)
+pol28$residuals <- residuals(m_pol28)
+
+# Pretty good!
+qqnorm(pol25$residuals); abline(a = 0, b = 1)
+qqnorm(pol27$residuals); abline(a = 0, b = 1)
+qqnorm(pol28$residuals); abline(a = 0, b = 1)
+
+# Plot the marginal effect of depth:
+# SD 25
+# nd_pol25 <- data.frame(depth_scaled = seq(min(pol25$depth_scaled), max(pol25$depth_scaled), length.out = 100))
+# nd_pol25$depth_scaled_sq <- nd_pol25$depth_scaled*nd_pol25$depth_scaled
+# nd_pol25$year <- as.integer(max(pol25$year))
+# nd_pol25$year_f <- factor(nd_pol25$year)
+# 
+# p_pol25 <- predict(m_pol25, newdata = nd_pol25, se_fit = TRUE, re_form = NA)
+# 
+# ggplot(p_pol25, aes(depth_scaled, exp(est),
+#   ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+#   geom_line() + geom_ribbon(alpha = 0.4)
+# 
+# # SD 27
+# nd_pol27 <- data.frame(depth_scaled = seq(min(pol27$depth_scaled), max(pol27$depth_scaled), length.out = 100))
+# nd_pol27$depth_scaled_sq <- nd_pol27$depth_scaled*nd_pol27$depth_scaled
+# nd_pol27$year <- as.integer(max(pol27$year))
+# nd_pol27$year_f <- factor(nd_pol27$year)
+# 
+# p_pol27 <- predict(m_pol27, newdata = nd_pol27, se_fit = TRUE, re_form = NA)
+# 
+# ggplot(p_pol27, aes(depth_scaled, exp(est),
+#   ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+#   geom_line() + geom_ribbon(alpha = 0.4)
+# 
+# # SD 28
+# nd_pol28 <- data.frame(depth_scaled = seq(min(pol28$depth_scaled), max(pol28$depth_scaled), length.out = 100))
+# nd_pol28$depth_scaled_sq <- nd_pol28$depth_scaled*nd_pol28$depth_scaled
+# nd_pol28$year <- as.integer(max(pol28$year))
+# nd_pol28$year_f <- factor(nd_pol28$year)
+# 
+# p_pol28 <- predict(m_pol28, newdata = nd_pol28, se_fit = TRUE, re_form = NA)
+# 
+# ggplot(p_pol28, aes(depth_scaled, exp(est),
+#   ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+#   geom_line() + geom_ribbon(alpha = 0.4)
+```
+
+Read in the prediction grids
+Read and crop pred grid to match polycheate
+
+```{r crop pred grid for polycheate, message=FALSE, warning=FALSE}
+## Read the prediction grid
+# pred_grid <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/pred_grid.csv")
+pred_grid <- read.csv("data/for_analysis/pred_grid.csv")
+
+pred_grid <- pred_grid %>%
+  mutate(depth_scaled = (depth - mean(pol$depth))/sd(pol$depth)) %>% 
+  mutate(depth_scaled_sq = depth_scaled*depth_scaled) %>% 
+  mutate(year_f = factor(year),
+         year = as.integer(year))
+
+# Subset the prediction grid to match polycheate data
+pred_grid_pol25 <- pred_grid %>% filter(SubDiv == "25" & year %in% c(unique(pol25$year)))
+pred_grid_pol27 <- pred_grid %>% filter(SubDiv == "27" & year %in% c(unique(pol27$year)))
+pred_grid_pol28 <- pred_grid %>% filter(SubDiv == "28" & year %in% c(unique(pol28$year)))
+
+tf_pol25 <- exclude.too.far(pred_grid_pol25$lon, pred_grid_pol25$lat, pol$lon, pol$lat, 0.05) # 0.03 seems reasonable
+tf_pol27 <- exclude.too.far(pred_grid_pol27$lon, pred_grid_pol27$lat, pol$lon, pol$lat, 0.05) # 0.03 seems reasonable
+tf_pol28 <- exclude.too.far(pred_grid_pol28$lon, pred_grid_pol28$lat, pol$lon, pol$lat, 0.05) # 0.03 seems reasonable
+
+# Filter the grid points that are not too far from the data
+pred_grid_pol25$too_far <- tf_pol25
+pred_grid_pol27$too_far <- tf_pol27
+pred_grid_pol28$too_far <- tf_pol28
+
+# Plot again
+pred_grid_pol25 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = pol25, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_pol27 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = pol27, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_pol28 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = pol28, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+```
+
+Now calculate the index by year and sub area
+
+```{r calculate pol index, cache=TRUE, message=FALSE}
+# From these models, predict annual biomass for each sub area
+# sort(unique(pol$SubDiv))
+
+# Sub division 25
+pol_preds25 <- predict(m_pol25, pred_grid_pol25, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+pol_ind25 <- get_index(pol_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells25 <- pred_grid_pol25 %>% filter(year == 2015 & SubDiv == 25) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells25
+pol_ind25 <- pol_ind25 %>% mutate(est = est/ncells25, lwr = lwr/ncells25, upr = upr/ncells25, SubDiv = 25)
+
+
+# Sub division 27
+pol_preds27 <- predict(m_pol27, pred_grid_pol27, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+pol_ind27 <- get_index(pol_preds27, bias_correct = F) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells27 <- pred_grid_pol27 %>% filter(year == 2015 & SubDiv == 27) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells27
+pol_ind27 <- pol_ind27 %>% mutate(est = est/ncells27, lwr = lwr/ncells27, upr = upr/ncells27, SubDiv = 27)
+
+
+# Sub division 28
+pol_preds28 <- predict(m_pol28, pred_grid_pol28, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+pol_ind28 <- get_index(pol_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells28 <- pred_grid_pol28 %>% filter(year == 2015 & SubDiv == 28) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells28
+pol_ind28 <- pol_ind28 %>% mutate(est = est/ncells28, lwr = lwr/ncells28, upr = upr/ncells28, SubDiv = 28)
+
+
+# Merge prediction-data
+pol_preds <- bind_rows(pol_ind25, pol_ind27, pol_ind28) %>% mutate(SubDiv = factor(SubDiv))
+
+# Compare to data quickly
+p <- pol_preds %>%
+  dplyr::select(year, est, upr, lwr, SubDiv) %>%
+  mutate(source = "pred") %>% 
+  arrange(year, SubDiv)
+
+d <- pol %>%
+  group_by(year, SubDiv) %>% 
+  summarise(est = mean(biomass),
+            sd = sd(biomass)) %>%
+  mutate(source = "data") %>% 
+  arrange(year, SubDiv)
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = est-sd, ymax = est+sd)) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.4) + 
+  theme_classic(base_size = 15) + 
+  ggtitle("Polychaeta")
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) + 
+  geom_errorbar(aes(ymin = est-sd, ymax = est+sd)) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  theme_classic(base_size = 15) + 
+  ggtitle("Polychaeta")
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  theme_classic(base_size = 15) + 
+  ggtitle("Polychaeta")
+```
+
+# Limecola
+Read data
+
+```{r lim data, message=FALSE}
+# lim <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/limecola.csv") %>%
+#   dplyr::select(-X1)
+lim <- read.csv("data/for_analysis/limecola.csv") %>% dplyr::select(-X)
+
+lim <- lim %>%
+  filter(year > 1985) %>% 
+  mutate(SubDiv = as.factor(SubDiv)) %>% 
+  filter(SubDiv %in% c(25, 27, 28)) %>% 
+  mutate(year_f = as.factor(year_f),
+         depth_scaled_sq = depth_scaled*depth_scaled)
+
+# Split data by subdivison
+lim25 <- lim %>% filter(SubDiv == "25")
+lim25 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(lim25, aes(lon, lat, color = biomass)) + geom_point()
+ggplot(lim25, aes(biomass)) + geom_histogram()
+
+lim27 <- lim %>% filter(SubDiv == "27" & lon < 17.4)
+lim27 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(lim27, aes(lon, lat, color = biomass)) + geom_point()
+ggplot(lim27, aes(biomass)) + geom_histogram()
+
+lim28 <- lim %>% filter(SubDiv == "28")
+lim28 %>%
+  group_by(year) %>%
+  summarize(n = n()) %>%
+  ggplot(., aes(year, n)) + geom_bar(stat = "identity")
+
+ggplot(lim28, aes(biomass)) + geom_histogram()
+
+lim28 <- lim28 %>% filter(year > 2005)
+
+# remove data points with more than 80 g/m2
+lim25 <- lim25 %>% filter(biomass < 300)
+lim27 <- lim27 %>% filter(biomass < 300)
+lim28 <- lim28 %>% filter(biomass < 190)
+```
+
+Read and crop pred grid to match limecola
+
+Fit models using `sdmTMB` assuming a Tweedie distribution and biomass as the response.
+
+Make spde mesh
+
+```{r make lim barrier spde mesh, results='hide', cache=TRUE, message=FALSE}
+# Non-island version
+lim_spde25 <- make_mesh(data = lim25, xy_cols = c("lon", "lat"), n_knots = 80, type = "kmeans", seed = 42)
+
+lim_spde27 <- make_mesh(data = lim27, xy_cols = c("lon", "lat"), n_knots = 50, type = "kmeans", seed = 42)
+
+lim_spde28 <- make_mesh(data = lim28, xy_cols = c("lon", "lat"), n_knots = 40, type = "kmeans", seed = 42)
+```
+
+Fit the models
+
+```{r fit lim tweedie model, cache=TRUE}
+m_lim25 <- sdmTMB(formula = biomass ~ year_f - 1, data = lim25,
+                  time = "year", spde = lim_spde25, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+m_lim27 <- sdmTMB(formula = biomass ~ year_f - 1, data = lim27,
+                  time = "year", spde = lim_spde27, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+m_lim28 <- sdmTMB(formula = biomass ~ year_f - 1, data = lim28,
+                  time = "year", spde = lim_spde28, family = tweedie(link = "log"),
+                  ar1_fields = FALSE, include_spatial = TRUE, spatial_trend = FALSE, spatial_only = TRUE)
+
+# Check residuals
+lim25$residuals <- residuals(m_lim25)
+lim27$residuals <- residuals(m_lim27)
+lim28$residuals <- residuals(m_lim28)
+
+# Pretty good!
+qqnorm(lim25$residuals); abline(a = 0, b = 1)
+qqnorm(lim27$residuals); abline(a = 0, b = 1)
+qqnorm(lim28$residuals); abline(a = 0, b = 1)
+
+# Plot the marginal effect of depth:
+# SD 25
+# nd_lim25 <- data.frame(depth_scaled = seq(min(lim25$depth_scaled), max(lim25$depth_scaled), length.out = 100))
+# nd_lim25$depth_scaled_sq <- nd_lim25$depth_scaled*nd_lim25$depth_scaled
+# nd_lim25$year <- as.integer(max(lim25$year))
+# nd_lim25$year_f <- factor(nd_lim25$year)
+# 
+# p_lim25 <- predict(m_lim25, newdata = nd_lim25, se_fit = TRUE, re_form = NA)
+# 
+# ggplot(p_lim25, aes(depth_scaled, exp(est),
+#   ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+#   geom_line() + geom_ribbon(alpha = 0.4)
+# 
+# # SD 27
+# nd_lim27 <- data.frame(depth_scaled = seq(min(lim27$depth_scaled), max(lim27$depth_scaled), length.out = 100))
+# nd_lim27$depth_scaled_sq <- nd_lim27$depth_scaled*nd_lim27$depth_scaled
+# nd_lim27$year <- as.integer(max(lim27$year))
+# nd_lim27$year_f <- factor(nd_lim27$year)
+# 
+# p_lim27 <- predict(m_lim27, newdata = nd_lim27, se_fit = TRUE, re_form = NA)
+# 
+# ggplot(p_lim27, aes(depth_scaled, exp(est),
+#   ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+#   geom_line() + geom_ribbon(alpha = 0.4)
+# 
+# # SD 28
+# nd_lim28 <- data.frame(depth_scaled = seq(min(lim28$depth_scaled), max(lim28$depth_scaled), length.out = 100))
+# nd_lim28$depth_scaled_sq <- nd_lim28$depth_scaled*nd_lim28$depth_scaled
+# nd_lim28$year <- as.integer(max(lim28$year))
+# nd_lim28$year_f <- factor(nd_lim28$year)
+# 
+# p_lim28 <- predict(m_lim28, newdata = nd_lim28, se_fit = TRUE, re_form = NA)
+# 
+# ggplot(p_lim28, aes(depth_scaled, exp(est),
+#   ymin = exp(est - 1.96 * est_se), ymax = exp(est + 1.96 * est_se))) +
+#   geom_line() + geom_ribbon(alpha = 0.4)
+```
+
+Read in the prediction grids
+Read and crop pred grid to match limecola
+
+```{r crop pred grid for limecola, message=FALSE, warning=FALSE}
+## Read the prediction grid
+# pred_grid <- readr::read_csv("https://raw.githubusercontent.com/maxlindmark/bentfish/main/data/for_analysis/pred_grid.csv")
+pred_grid <- read.csv("data/for_analysis/pred_grid.csv")
+
+pred_grid <- pred_grid %>%
+  mutate(depth_scaled = (depth - mean(lim$depth))/sd(lim$depth)) %>% 
+  mutate(depth_scaled_sq = depth_scaled*depth_scaled) %>% 
+  mutate(year_f = factor(year),
+         year = as.integer(year))
+
+# Subset the prediction grid to match limecola data
+pred_grid_lim25 <- pred_grid %>% filter(SubDiv == "25" & year %in% c(unique(lim25$year)))
+pred_grid_lim27 <- pred_grid %>% filter(SubDiv == "27" & year %in% c(unique(lim27$year)))
+pred_grid_lim28 <- pred_grid %>% filter(SubDiv == "28" & year %in% c(unique(lim28$year)))
+
+tf_lim25 <- exclude.too.far(pred_grid_lim25$lon, pred_grid_lim25$lat, lim$lon, lim$lat, 0.05) # 0.03 seems reasonable
+tf_lim27 <- exclude.too.far(pred_grid_lim27$lon, pred_grid_lim27$lat, lim$lon, lim$lat, 0.05) # 0.03 seems reasonable
+tf_lim28 <- exclude.too.far(pred_grid_lim28$lon, pred_grid_lim28$lat, lim$lon, lim$lat, 0.05) # 0.03 seems reasonable
+
+# Filter the grid points that are not too far from the data
+pred_grid_lim25$too_far <- tf_lim25
+pred_grid_lim27$too_far <- tf_lim27
+pred_grid_lim28$too_far <- tf_lim28
+
+# Plot again
+pred_grid_lim25 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = lim25, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_lim27 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = lim27, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+
+pred_grid_lim28 %>%
+  filter(too_far == FALSE) %>%
+  ggplot(., aes(lon, lat, fill = factor(SubDiv))) +
+  geom_raster() +
+  geom_point(data = lim28, aes(lon, lat), color = "black", size = 0.5) +
+  NULL
+```
+
+Now calculate the index by year and sub area
+
+```{r calculate lim index, cache=TRUE, message=FALSE}
+# From these models, predict annual biomass for each sub area
+# sort(unique(lim$SubDiv))
+
+# Sub division 25
+lim_preds25 <- predict(m_lim25, pred_grid_lim25, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+lim_ind25 <- get_index(lim_preds25, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells25 <- pred_grid_lim25 %>% filter(year == 2015 & SubDiv == 25) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells25
+lim_ind25 <- lim_ind25 %>% mutate(est = est/ncells25, lwr = lwr/ncells25, upr = upr/ncells25, SubDiv = 25)
+
+
+# Sub division 27
+lim_preds27 <- predict(m_lim27, pred_grid_lim27, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+lim_ind27 <- get_index(lim_preds27, bias_correct = F) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells27 <- pred_grid_lim27 %>% filter(year == 2015 & SubDiv == 27) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells27
+lim_ind27 <- lim_ind27 %>% mutate(est = est/ncells27, lwr = lwr/ncells27, upr = upr/ncells27, SubDiv = 27)
+
+
+# Sub division 28
+lim_preds28 <- predict(m_lim28, pred_grid_lim28, return_tmb_object = TRUE) # Predict using the grid for subarea
+
+lim_ind28 <- get_index(lim_preds28, bias_correct = T) # Get the index (sum of all cells in the pred grid)
+
+# The index is now the sum of grid cells in g/area of a grid cell
+# First multiply by the area of a grid cell to get raw g
+ncells28 <- pred_grid_lim28 %>% filter(year == 2015 & SubDiv == 28) %>% nrow()
+# Then divide that by the total area
+
+# This is the same as simply dividing by ncells28
+lim_ind28 <- lim_ind28 %>% mutate(est = est/ncells28, lwr = lwr/ncells28, upr = upr/ncells28, SubDiv = 28)
+
+
+# Merge prediction-data
+lim_preds <- bind_rows(lim_ind25, lim_ind27, lim_ind28) %>% mutate(SubDiv = factor(SubDiv))
+
+# Compare to data quickly
+p <- lim_preds %>%
+  dplyr::select(year, est, upr, lwr, SubDiv) %>%
+  mutate(source = "pred") %>% 
+  arrange(year, SubDiv)
+
+d <- lim %>%
+  group_by(year, SubDiv) %>% 
+  summarise(est = mean(biomass),
+            sd = sd(biomass)) %>%
+  mutate(source = "data") %>% 
+  arrange(year, SubDiv)
+  
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = est-sd, ymax = est+sd)) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.4) + 
+  theme_classic(base_size = 15) + 
+  ggtitle("Limecola")
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) + 
+  geom_errorbar(aes(ymin = est-sd, ymax = est+sd)) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  theme_classic(base_size = 15) + 
+  ggtitle("Limecola")
+
+ggplot(bind_rows(p, d), aes(year, est, color = source)) +
+  geom_point(size = 4) + 
+  geom_line(size = 1) + 
+  facet_wrap(~ SubDiv, scales = "free", ncol = 4) +
+  theme_classic(base_size = 15) + 
+  ggtitle("Limecola")
+```
+
+# Merge data to a full index
+```{r merge all predictions}
+sad_preds <- sad_preds %>%
+  dplyr::select(year, SubDiv, est, lwr, upr) %>%
+  mutate(species_group = "Saduria entomon", source = "model")
+
+lim_preds <- lim_preds %>%
+  dplyr::select(year, SubDiv, est, lwr, upr) %>%
+  mutate(species_group = "Limecola balthica", source = "model")
+
+pol_preds <- pol_preds %>%
+  dplyr::select(year, SubDiv, est, lwr, upr) %>%
+  mutate(species_group = "Polychaeta", source = "model")
+
+pred_dat <- bind_rows(sad_preds, lim_preds, pol_preds)
+
+# Now add in the data
+dat <- bind_rows(sad25, sad27, sad28,
+                 lim25, lim27, lim28,
+                 pol25, pol27, pol28) %>% dplyr::select(year, SubDiv, species_group, biomass)
+
+avg_dat <- dat %>%
+  group_by(year, SubDiv, species_group) %>%
+  summarize(est = mean(biomass)) %>%
+  mutate(source = "data")
+
+full_dat <- bind_rows(avg_dat, pred_dat)
+
+# Plot
+ggplot(full_dat, aes(year, est, color = factor(SubDiv), shape = source, linetype = source)) +
+  geom_point(size = 3) +
+  geom_line(size = 0.5) +
+  scale_color_brewer(palette = "Dark2", name = "sub-area") +
+  facet_wrap(~ species_group, scales = "free", ncol = 3) +
+  theme_classic(base_size = 15) +
+  theme(legend.position = "bottom")
+ggsave("figures/long_index_data.png", width = 9, height = 9, dpi = 600)
+
+# Now without data
+full_dat %>%
+  filter(source == "model") %>%
+  ggplot(., aes(year, est, color = factor(SubDiv), fill = factor(SubDiv))) +
+  geom_point(size = 4) +
+  geom_line(size = 1) +
+  scale_color_brewer(palette = "Dark2", name = "sub-area") +
+  scale_fill_brewer(palette = "Dark2", name = "sub-area") +
+  facet_wrap(~ species_group, scales = "free", ncol = 3) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2, color = NA) +
+  theme_classic(base_size = 15) +
+  theme(legend.position = "bottom")
+
+full_dat %>%
+  filter(source == "model") %>%
+  ggplot(., aes(year, est, color = factor(SubDiv), fill = factor(SubDiv))) +
+  geom_point(size = 4) +
+  geom_line(size = 1) +
+  scale_color_brewer(palette = "Dark2", name = "sub-area") +
+  scale_fill_brewer(palette = "Dark2", name = "sub-area") +
+  facet_wrap(~ species_group, scales = "free", ncol = 3) +
+  theme_classic(base_size = 15) +
+  theme(legend.position = "bottom")
+
+ggsave("figures/long_index_ci.png", width = 9, height = 9, dpi = 600)
+
+write.csv(full_dat, "output/long_benthic_indicies.csv")
+```

@@ -100,7 +100,7 @@ pred_grid <- pred_grid %>%
 # Subset the prediction grid to match saduria data
 pred_grid_sad <- pred_grid
 
-tf_sad <- exclude.too.far(pred_grid_sad$lon, pred_grid_sad$lat, sad$lon, sad$lat, 0.01) # 0.03 seems reasonable
+tf_sad <- exclude.too.far(pred_grid_sad$lon, pred_grid_sad$lat, sad$lon, sad$lat, 0.02) # 0.03 seems reasonable
 
 # Filter the grid points that are not too far from the data
 pred_grid_sad$too_far <- tf_sad
