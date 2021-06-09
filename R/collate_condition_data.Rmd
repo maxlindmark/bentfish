@@ -1,0 +1,496 @@
+---
+title: "Collate condition data"
+author: "Max Lindmark"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include = FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.asp = 0.618,
+  fig.align ='center'
+)
+```
+
+## Overview
+
+Combine condition data from DATRAS (1991-Present) with older data from Sweden and Latvia
+
+```{r load libraries, warning=F, message=F}
+# Load libraries, install if needed
+library(tidyverse); theme_set(theme_classic())
+library(readxl)
+library(tidylog)
+library(RCurl)
+library(viridis)
+library(RColorBrewer)
+library(patchwork)
+library(janitor)
+library(icesDatras)
+library(mapdata)
+library(patchwork)
+library(rgdal)
+library(raster)
+library(sf)
+library(rgeos)
+library(chron)
+library(lattice)
+library(ncdf4)
+library(sdmTMB) # remotes::install_github("pbs-assess/sdmTMB")
+library(marmap)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(mapplots)
+
+# Print package versions
+# sessionInfo()
+# other attached packages:
+# [1] sf_0.9-5           raster_3.3-13      rgdal_1.5-12       sp_1.4-2           mapdata_2.3.0      maps_3.3.0         ggsidekick_0.0.2  
+# [8] icesDatras_1.3-0   janitor_2.0.1      patchwork_1.0.1    RColorBrewer_1.1-2 viridis_0.5.1      viridisLite_0.3.0  RCurl_1.98-1.2    
+# [15] tidylog_1.0.2      readxl_1.3.1       forcats_0.5.0      stringr_1.4.0      dplyr_1.0.0        purrr_0.3.4        readr_1.3.1       
+# [22] tidyr_1.1.0        tibble_3.0.3       ggplot2_3.3.2      tidyverse_1.3.0 
+
+# For adding maps to plots
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Specify map ranges
+ymin = 54; ymax = 58; xmin = 9.5; xmax = 22
+```
+
+## Cod
+### DATRAS
+
+```{r read datras data, warning=F, message=F}
+# READ HAUL DATA
+# Load HH data using the DATRAS package to get catches
+# bits_hh <- getDATRAS(record = "HH", survey = "BITS", years = 1991:2020, quarters = 1:4)
+
+# write.csv("data/bits_hh.csv")
+bits_hh <- read.csv("data/condition_data/DATRAS_exchange/bits_hh.csv")
+
+sort(unique(bits_hh$Year))
+
+# Create ID column
+bits_hh <- bits_hh %>% 
+  mutate(ID = paste(Year, Quarter, Ship, Gear, HaulNo, StNo, sep = "."))
+  
+# Check that per ID, there's only one row
+bits_hh %>%
+  group_by(ID) %>% 
+  mutate(n = n()) %>% 
+  filter(n > 1) %>% 
+  arrange(ID) %>% 
+  as.data.frame()
+
+# Check default availability of environmental data
+ggplot(bits_hh, aes(BotSal)) + geom_histogram()
+ggplot(bits_hh, aes(SurSal)) + geom_histogram()
+ggplot(bits_hh, aes(BotTemp)) + geom_histogram()
+
+# Plot haul-duration
+ggplot(bits_hh, aes(HaulDur)) + geom_histogram()
+
+# Select only useful columns, this is the dataframe used in the merge later on
+bits_hh_filter <- bits_hh %>% dplyr::select(ID, ShootLat, ShootLong, StatRec, Depth,
+                                            BotTemp,BotSal, Year, Quarter, HaulDur, 
+                                            DataType, HaulVal)
+
+# Test I only got 1 row per haul
+bits_hh_filter %>% 
+  group_by(ID) %>%
+  mutate(n = n()) %>% 
+  ggplot(., aes(factor(n))) + geom_bar()
+
+
+# READ LENGTH-WEIGHT DATA
+# Load CA data using the DATRAS package to get catches
+# Note we only want cod data here
+# bits_ca <- getDATRAS(record = "CA", survey = "BITS", years = 1991:2020, quarters = 1:4)
+
+# write.csv("data/bits_ca.csv")
+bits_ca <- read.csv("data/condition_data/DATRAS_exchange/bits_ca.csv")
+
+# Filter only cod and positive length measurements
+bits_ca <- bits_ca %>% filter(SpecCode %in% c("164712", "126436") & LngtClass > 0)
+
+# Add new species-column
+bits_ca$Species <- "Cod"
+
+# Create ID column
+bits_ca <- bits_ca %>% 
+  mutate(ID = paste(Year, Quarter, Ship, Gear, HaulNo, StNo, sep = "."))
+
+# Check # rows per unique ID AND LNGTCLASS (more than one since 1 row = 1 category, and NoAtLngt is the n in the category)
+bits_ca %>% 
+  mutate(TEST = paste(ID, LngtClass)) %>% 
+  group_by(TEST) %>% 
+  mutate(n = n()) %>% 
+  ungroup() %>%
+  ggplot(., aes(factor(n))) + geom_bar()
+
+# Now I need to copy rows with NoAtLngt > 1 so that 1 row = 1 ind
+# First make a small test
+nrow(bits_ca)
+head(filter(bits_ca, NoAtLngt == 5))
+head(filter(bits_ca, ID == "1992.1.GFR.SOL.H20.33.42" & NoAtLngt == 5), 20)
+
+bits_ca <- bits_ca %>% map_df(., rep, .$NoAtLngt)
+
+head(data.frame(filter(bits_ca, ID == "1992.1.GFR.SOL.H20.33.42" & NoAtLngt == 5)), 20)
+nrow(bits_ca)
+# Looks ok!
+
+# Standardize length
+bits_ca <- bits_ca %>% 
+  drop_na(IndWgt) %>% 
+  drop_na(LngtClass) %>% 
+  filter(IndWgt > 0 & LngtClass > 0) %>%  # Filter positive length and weight
+  mutate(length_cm = ifelse(LngtCode == ".", 
+                            LngtClass/10,
+                            LngtClass)) %>% # Standardize length ((https://vocab.ices.dk/?ref=18))
+  as.data.frame()
+  
+ggplot(bits_ca, aes(length_cm, fill = LngtCode)) + geom_histogram()
+
+# JOIN CONDITION AND HAUL DATA
+# Check if any ID is in the HL but not HH data
+# I will need to remove these because they do not have any spatial information
+#bits_ca$ID[!bits_ca$ID %in% bits_hh_filter$ID]
+
+# And other way around (this is expected since we have hauls without catches or data 
+# on condition)
+#bits_hh_filter$ID[!bits_hh_filter$ID %in% bits_ca$ID]
+
+dat <- left_join(bits_ca, bits_hh_filter)
+
+# Remove the NA latitudes and we remove all the IDs that were in the bits_ca but not 
+# in the haul data
+dat <- dat %>% drop_na(ShootLat)
+
+# Plot spatial distribution of samples
+# dat %>% 
+#   ggplot(., aes(y = ShootLat, x = ShootLong)) +
+#   geom_point(size = 0.3) +
+#   facet_wrap(~ Year) + 
+#   theme_bw() +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2) +
+#   coord_sf(xlim = c(8, 25), ylim = c(54, 60)) +
+#   NULL
+
+# Lastly we can remove hauls from outside the study area (Kattegatt basically)
+# select only quarter 4 and remove non-valid hauls
+dat <- dat %>% 
+  filter(ShootLat < 58) %>% 
+  mutate(kattegatt = ifelse(ShootLat > 56 & ShootLong < 14, "Y", "N")) %>% 
+  filter(kattegatt == "N",
+         Quarter == 4,
+         HaulVal == "V") %>% 
+  dplyr::select(-kattegatt)
+
+# Plot again:
+# Plot spatial distribution of samples
+# dat %>% 
+#   ggplot(., aes(y = ShootLat, x = ShootLong)) +
+#   geom_point(size = 0.3) +
+#   facet_wrap(~ Year) + 
+#   theme_bw() +
+#   geom_sf(data = world, inherit.aes = F, size = 0.2) +
+#   coord_sf(xlim = c(8, 25), ylim = c(54, 60)) +
+#   NULL
+
+min(dat$ShootLon)
+
+dat %>% filter(ID == "1991.4.SOL.H20.34.49")
+```
+
+### Latvian data (Pre -91)
+
+```{r read old data, warning=F, message=F}
+# READ HAUL DATA
+# write.csv("data/bits_hh.csv")
+lat_hh <- read_excel("data/condition_data/LatvianFull.xlsx", sheet = 1)
+
+sort(unique(lat_hh$Year))
+
+# Create ID column
+lat_hh <- lat_hh %>%
+  mutate(ID = paste(Year, Quarter, Gear, HaulNo, StNo, sep = "."))
+
+# Check that per ID, there's only one row
+lat_hh %>%
+  group_by(ID) %>%
+  mutate(n = n()) %>%
+  filter(n > 1) %>%
+  arrange(ID) %>%
+  as.data.frame()
+
+# Plot haul-duration
+ggplot(lat_hh, aes(HaulDur)) + geom_histogram()
+
+# Select only useful columns, this is the dataframe used in the merge later on
+lat_hh_filter <- lat_hh %>% dplyr::select(ID, ShootLat, ShootLong, StatRec, Depth,
+                                          BotTemp,BotSal, Year, Quarter, HaulDur,
+                                          DataType, HaulVal)
+
+# Test I only got 1 row per haul
+lat_hh_filter %>%
+  group_by(ID) %>%
+  mutate(n = n()) %>%
+  ggplot(., aes(factor(n))) + geom_bar()
+
+
+# READ LENGTH-WEIGHT DATA
+# Load CA data using the DATRAS package to get catches
+lat_ca <- read_excel("data/condition_data/LatvianFull.xlsx", sheet = 3)
+
+# Filter only cod and positive length measurements
+lat_ca <- lat_ca %>% filter(Species == "Gadus morhua" & LngtClas > 0)
+
+lat_ca <- lat_ca %>% rename("LngtClass" = "LngtClas")
+
+# Add new species-column
+lat_ca$Species <- "Cod"
+
+# Create ID column
+lat_ca <- lat_ca %>%
+  mutate(ID = paste(Year, Quarter, Gear, HaulNo, StNo, sep = "."))
+
+# Check # rows per unique ID AND LNGTCLASS (more than one since 1 row = 1 category, and NoAtLngt is the n in the category)
+lat_ca %>%
+  mutate(TEST = paste(ID, LngtClass)) %>%
+  group_by(TEST) %>%
+  mutate(n = n()) %>%
+  ungroup() %>%
+  ggplot(., aes(factor(n))) + geom_bar()
+
+# Now I need to copy rows with NoAtLngt > 1 so that 1 row = 1 ind
+# First make a small test
+nrow(lat_ca)
+sort(unique(lat_ca$NoAtALK)) # ok, they are already 1 row = 1 individual
+
+# Standardize length
+lat_ca <- lat_ca %>%
+  drop_na(IndWgt) %>%
+  drop_na(LngtClass) %>%
+  filter(IndWgt > 0 & LngtClass > 0) %>%  # Filter positive length and weight
+  mutate(length_cm = ifelse(LngtCode == ".",
+                            LngtClass/10,
+                            LngtClass)) %>% # Standardize length ((https://vocab.ices.dk/?ref=18))
+  as.data.frame()
+
+ggplot(lat_ca, aes(length_cm, fill = factor(LngtCode))) + geom_histogram()
+
+# JOIN CONDITION AND HAUL DATA
+# Check if any ID is in the CA but not HH data
+# I will need to remove these because they do not have any spatial information
+length(unique(lat_ca$ID))
+length(unique(lat_hh_filter$ID))
+
+# And other way around (this is expected since we have hauls without catches or data
+# on condition)
+# lat_hh_filter$ID[!lat_hh_filter$ID %in% lat_ca$ID]
+
+lat_old <- left_join(lat_ca, dplyr::select(lat_hh_filter, c("ID", "ShootLat", "ShootLong")), by = "ID")
+
+# Remove the NA latitudes and we remove all the IDs that were in the bits_ca but not
+# in the haul data
+lat_old <- lat_old %>% drop_na(ShootLat)
+
+# Plot spatial distribution of samples
+lat_old %>%
+  ggplot(., aes(y = ShootLat, x = ShootLong)) +
+  geom_point(size = 0.3) +
+  facet_wrap(~ Year) +
+  theme_bw() +
+  geom_sf(data = world, inherit.aes = F, size = 0.2) +
+  coord_sf(xlim = c(8, 25), ylim = c(54, 60)) +
+  NULL
+```
+
+### Swedish data (1998-91)
+
+```{r read swedish data, warning=F, message=F}
+# write.csv("data/bits_hh.csv")
+swe_bio <- read.csv("data/condition_data/trawl_surveys_(s) (10).csv", sep = ";")
+swe_haul <- read.csv("data/condition_data/trawl_surveys_zincl_(l) (16).csv", sep = ";")
+
+str(swe_bio)
+str(swe_haul)
+
+# Check it's only cod
+unique(swe_haul$Species)
+unique(swe_bio$Species)
+
+# Filter years
+swe_bio <- swe_bio %>% filter(Year < 1991)
+swe_haul <- swe_haul %>% filter(Year < 1991)
+
+# Join the trawl, bio and stomach data. First create a unique ID. Sample is otolith number (fish ID!)
+# First need to standardize some columns... 
+#swe_bio <- swe_bio %>% rename("Sample" = "Otolith.no") # There are three "Otolith.no" that are the same in two different fish id
+
+# Make sample numeric in the temp_new data
+#swe_bio$Sample <- as.numeric(swe_bio$Sample)
+
+# Now add the ID
+swe_bio$bio_ID <- paste(swe_bio$Year,
+                        swe_bio$Quarter,
+                        swe_bio$Haul,
+#                       swe_bio$Sample,
+                        sep = "_")
+
+# Check IDS
+swe_bio %>% 
+  group_by(bio_ID) %>% 
+  mutate(n = n()) %>% 
+  ungroup() %>% 
+  distinct(n)
+
+# Now add the ID to the trawl data. This should be unique per ID and length clas
+swe_haul$bio_ID <- paste(swe_haul$Year,
+                         swe_haul$Quarter,
+                         swe_haul$Haul,
+                         sep = "_")
+
+swe_haul %>%
+  group_by(bio_ID, Lengthcl.) %>%
+  summarise(n = n()) %>% 
+  ggplot(., aes(n)) + geom_histogram()
+
+# Ok, so this is unique. I only want the lat and lon columns though.
+swe_haul$bio_ID <- paste(swe_haul$Year,
+                         swe_haul$Quarter,
+                         swe_haul$Haul,
+                         sep = "_")
+
+swe_haul_distinct <- swe_haul %>%
+  distinct(bio_ID, .keep_all = TRUE) %>% 
+  dplyr::select(Lat, Long, bio_ID)
+
+# Now correct the coordinates
+# Make them numeric
+swe_haul_distinct$Lat <- as.numeric(gsub(",", "\\.", swe_haul_distinct$Lat))
+swe_haul_distinct$Long <- as.numeric(gsub(",", "\\.", swe_haul_distinct$Long))
+
+# For these coordinates, we can use the function Fede provided:
+format.position <- function(x){
+  sign.x <- sign(x)
+  x <- abs(x)
+  x <- ifelse(nchar(x)==3, paste("0",x,sep=""), x)
+  x <- ifelse(nchar(x)==2, paste("00",x,sep=""), x)
+  x <- ifelse(nchar(x)==1, paste("000",x,sep=""), x)
+  dec.x <- as.numeric(paste(substring(x,1,2)))+as.numeric(paste(substring(x,3,4)))/60
+  dec.x <- sign.x*dec.x
+}
+
+# Apply function
+swe_haul_distinct$Lat <- format.position(swe_haul_distinct$Lat)
+swe_haul_distinct$Long <- format.position(swe_haul_distinct$Long)
+
+# Looks good! 
+ggplot(swe_haul_distinct, aes(Long, Lat)) + geom_point()
+
+# left_join in coordinates into bio data
+swe_bio <- left_join(swe_bio, swe_haul_distinct)
+
+# Change length variable
+swe_bio <- swe_bio %>% mutate(length_cm = Lengthcl/10)
+```
+
+## Merge data
+
+```{r clean data for analysis}
+# Filter only essential columns...
+
+dat_sub <- dat %>%
+  dplyr::select(IndWgt, length_cm, ShootLat, ShootLong, Year, Quarter) %>% 
+  rename("weight_g" = "IndWgt",
+         "lat" = "ShootLat",
+         "lon" = "ShootLong",
+         "year" = "Year",
+         "quarter" = "Quarter")
+
+lat_old_sub <- lat_old %>% 
+  dplyr::select(IndWgt, length_cm, ShootLat, ShootLong, Year, Quarter) %>% 
+  rename("weight_g" = "IndWgt",
+         "lat" = "ShootLat",
+         "lon" = "ShootLong",
+         "year" = "Year",
+         "quarter" = "Quarter")
+
+swe_bio_sub <- swe_bio %>%
+  dplyr::select(Weight, length_cm, Lat, Long, Year, Quarter) %>% 
+  rename("weight_g" = "Weight",
+         "lat" = "Lat",
+         "lon" = "Long",
+         "year" = "Year",
+         "quarter" = "Quarter")
+  
+d <- bind_rows(dat_sub, lat_old_sub, swe_bio_sub)
+
+# Add in ICES sub div
+func <-
+  getURL("https://raw.githubusercontent.com/maxlindmark/bentfish/main/R/functions/get_sub_area.R",
+         ssl.verifypeer = FALSE)
+
+eval(parse(text = func))
+
+d <- get_sub_area(dat = d, lat = d$lat, lon = d$lon)
+
+# Finally add depth information
+west <- raster("data/depth_geo_tif/D5_2018_rgb-1.tif")
+#plot(west)
+
+east <- raster("data/depth_geo_tif/D6_2018_rgb-1.tif")
+#plot(east)
+
+dep_rast <- raster::merge(west, east)
+
+d$depth_rast <- extract(dep_rast, d[, 4:3])
+
+# Convert to depth (instead of elevation)
+ggplot(d, aes(depth_rast)) + geom_histogram()
+ggplot(d, aes(lon, lat, color = depth_rast)) + geom_point()
+d <- d %>% drop_na(depth_rast)
+d$depth_rast <- (d$depth_rast - max(d$depth_rast)) *-1
+ggplot(d, aes(depth_rast)) + geom_histogram()
+ggplot(d, aes(lon, lat, color = depth_rast)) + geom_point()
+
+# Quality check and filter further
+d <- d %>% filter(SubDiv %in% c(25, 27, 28) & quarter == 4)
+
+ggplot(d, aes(log(length_cm), log(weight_g))) + geom_point()
+
+d %>% 
+  group_by(SubDiv, year) %>% 
+  summarise(mean_length = mean(length_cm)) %>% 
+  ggplot(., aes(year, mean_length, color = factor(SubDiv))) +
+  geom_line() +
+  geom_point()
+
+d %>% 
+  group_by(SubDiv, year) %>% 
+  summarise(n = n()) %>% 
+  ggplot(., aes(year, n, color = factor(SubDiv))) +
+  geom_line() +
+  geom_point()
+
+# Remove outliers
+d <- d %>% 
+  mutate(Fulton_K = weight_g/(0.01*length_cm^3), # not cod-specific
+         year_f = as.factor(year)) %>% 
+  filter(Fulton_K < 3 & Fulton_K > 0.15) 
+
+# sort(unique(d_analysis$year))
+write.csv(d, file = "data/condition_data/clean_condition_data.csv", row.names = FALSE)
+```

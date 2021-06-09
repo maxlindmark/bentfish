@@ -1,0 +1,144 @@
+---
+title: "Condition model"
+author: "Max Lindmark"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 12,
+  fig.asp = 0.618,
+  fig.align ='center'
+)
+```
+
+## Aim
+Fit main model (see exploratory scripts and model comparison), visualize results.
+
+## Fit models
+### Read data and set up spde mesh
+```{r packages, message=FALSE, warning=TRUE}
+library(tidyverse); theme_set(theme_classic())
+library(tidylog)
+library(viridis)
+library(sdmTMB) # remotes::install_github("pbs-assess/sdmTMB")
+library(marmap)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(RColorBrewer)
+library(gganimate)
+library(gifski)
+library(latex2exp)
+library(patchwork)
+library(png)
+library(qwraps2) # To load entire cache in interactive r session, do: qwraps2::lazyload_cache_dir(path = "R/analysis/condition_model_cache/html")
+
+# For adding maps to plots
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Specify map ranges
+ymin = 54; ymax = 58; xmin = 9.5; xmax = 22
+```
+
+Now read data:
+
+```{r read and process data, message=FALSE, warning=FALSE}
+cod <- read_csv("data/condition_data/clean_condition_data.csv")
+
+# Calculate standardized variables
+cod <- cod %>% 
+  mutate(ln_length_cm = log(length_cm),
+         ln_weight_g = log(weight_g),
+         depth_sc = depth_rast) %>%
+  mutate_at(c("depth_sc"),
+            ~(scale(.) %>% as.vector)) %>% 
+  mutate(year = as.integer(year))
+
+# Plot size distributions for all years
+ggplot(cod, aes(length_cm)) + geom_histogram() + facet_wrap(~year, scale = "free")
+
+unique(cod$SubDiv)
+```
+
+Make barrier spde mesh
+
+```{r make sad barrier spde mesh, results='hide', cache=TRUE, message=FALSE}
+# Non-island version
+cod_spde <- make_mesh(data = cod, xy_cols = c("lon", "lat"), n_knots = 150, type = "kmeans", seed = 42)
+```
+
+### Full model
+
+```{r full model, cache=TRUE}
+mcod <- sdmTMB(formula = ln_weight_g ~ ln_length_cm + depth_sc -1, time_varying = ~ 1, data = cod, time = "year",
+               spde = cod_spde, family = student(link = "identity", df = 5), ar1_fields = TRUE,
+               include_spatial = TRUE, spatial_trend = FALSE, spatial_only = FALSE,
+               silent = TRUE, newton_steps = 1, reml = FALSE)
+
+tidy(mcod, conf.int = TRUE)
+tidy(mcod, conf.int = TRUE, effects = "ran_pars")
+
+random_walk <- data.frame(summary(TMB::sdreport(mcod$tmb_obj))) %>% 
+  rownames_to_column("param") %>%
+  filter(stringr::str_detect(param, 'b_rw_t')) %>% 
+  rename("se" = "Std..Error") %>% 
+  mutate(year = sort(unique(cod$year)),
+         upr = Estimate + 1.96*se,
+         lwr = Estimate - 1.96*se,
+         model = "random walk")
+
+random_walk
+
+ln_a <- mean(random_walk$Estimate)
+b <- tidy(mcod, conf.int = TRUE)$estimate[1]
+
+# MODEL VALIDATION HERE
+```
+
+### Check model
+
+```{r check residuals}
+# Check residuals
+cod2 <- cod
+cod2$residuals <- residuals(mcod)
+
+# Pretty good!
+qqnorm(cod2$residuals); abline(a = 0, b = 1)
+```
+
+### Calculate Le Cren's condition index on data
+
+```{r calculate condition index}
+cod$pred_w <- exp(ln_a + b*cod$ln_length_cm)
+
+cod$le_cren <- cod$weight_g / cod$pred_w
+
+sum_dat <- cod %>% 
+  mutate(lngt_class = ifelse(length_cm < 30, "< 30", "30-50"),
+         lngt_class = ifelse(length_cm > 50, "50+", lngt_class)) %>% 
+  mutate(lngt_class = factor(lngt_class)) %>% 
+  rename("Year" = "year") %>% 
+  group_by(SubDiv, Year, lngt_class) %>% 
+  summarise(Mean_cond = mean(le_cren))
+
+ggplot(sum_dat, aes(Year, Mean_cond, color = factor(SubDiv))) +
+  geom_point() + 
+  facet_wrap(~lngt_class) +
+  geom_line()
+
+# Save as output
+write.csv(sum_dat, "output/cod_condition_index.csv")
+```
+
+
+
+
