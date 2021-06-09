@@ -930,5 +930,5 @@ full_dat %>%
 
 ggsave("figures/long_index_ci.png", width = 9, height = 9, dpi = 600)
 
-write.csv(full_dat, "output/long_benthic_indicies.csv")
+write.csv(full_dat, "output/long_benthic_indices.csv")
 ```
