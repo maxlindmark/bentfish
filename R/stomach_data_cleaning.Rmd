@@ -1258,13 +1258,13 @@ func <-
 
 eval(parse(text = func))
 
-full_dat <- get_sub_area(dat = full_dat, lat = full_dat$lat, lon = full_dat$lon)
+full_dat <- get_sub_area(dat = full_dat, lat = full_dat$Lat, lon = full_dat$Long)
 
 full_dat <- full_dat %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
 
 ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
 
-ggplot(full_dat, aes(x = Long, y = Lat, color = sub_area)) +
+ggplot(full_dat, aes(x = Long, y = Lat, color = SubDiv)) +
   geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
@@ -1277,10 +1277,10 @@ ggsave("figures/sub_areas_stomach.png", width = 9, height = 9, dpi = 600)
 
 Now save and wait for the next data!
 ```{r, save}
-write.csv(full_dat, "data/for_analysis/stomach/full_stomach_data_20.12.16.csv")
+write.csv(full_dat, "data/for_analysis/stomach/full_stomach_data_21.06.09.csv")
 
 # Only recent years
 sub_full_dat <- filter(full_dat, Year > 2014)
-write.csv(sub_full_dat, "data/for_analysis/stomach/2015-2018_stomach_data_20.12.16.csv")
+write.csv(sub_full_dat, "data/for_analysis/stomach/2015-2018_stomach_data_21.06.09.csv")
 ```
 
