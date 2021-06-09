@@ -72,7 +72,7 @@ plot_map_raster <- function(dat, column = "est") {
 ## Read data that we previously compiled
 
 ```{r read data, message=FALSE, results="hide"}
-d <- read.csv("data/data_complete.csv") %>%
+d <- read.csv("data/benthic_data_complete.csv") %>%
   dplyr::select(-X) %>% 
   mutate(species_group = as.factor(species_group))
 
