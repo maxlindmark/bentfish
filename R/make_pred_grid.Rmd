@@ -579,7 +579,7 @@ eval(parse(text = func))
 
 pred_grid2 <- get_sub_area(dat = pred_grid2, lat = pred_grid2$lat, lon = pred_grid2$lon)
 
-pred_grid2 <- pred_grid2 %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
+#pred_grid2 <- pred_grid2 %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
 
 # This is what the ICES areas would look like
 p2a <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = SubDiv)) +
