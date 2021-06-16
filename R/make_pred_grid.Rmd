@@ -79,7 +79,7 @@ First create a grid for predictions based on the data (temporary approach!)
 # https://stackoverflow.com/questions/27697504/ocean-latitude-longitude-point-distance-from-shore
 
 # Read in the benthic data
-d <- read.csv("data/data_complete.csv") %>% dplyr::select(-X)
+d <- read.csv("data/benthic_data_complete.csv") %>% dplyr::select(-X)
 
 d <- d %>% mutate(sub_area = as.factor(sub_area),
                   SubDiv = as.factor(SubDiv))
@@ -580,37 +580,6 @@ eval(parse(text = func))
 pred_grid2 <- get_sub_area(dat = pred_grid2, lat = pred_grid2$lat, lon = pred_grid2$lon)
 
 pred_grid2 <- pred_grid2 %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
-
-p1a <- pred_grid2 %>% drop_na(sub_area) %>% 
-  ggplot(., aes(x = lon, y = lat, fill = sub_area)) +
-  geom_raster() +
-  coord_cartesian(expand = 0) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-  theme_classic(base_size = 16) +
-  ggtitle("Pred grid")
-
-p1b <- d %>% drop_na(sub_area) %>%
-  ggplot(., aes(x = lon, y = lat, color = sub_area)) +
-  geom_point() +
-  coord_cartesian(expand = 0) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-  theme_classic(base_size = 16) +
-  ggtitle("Benthic data")
-
-p1c <- dd %>% drop_na(sub_area) %>%
-  ggplot(., aes(x = Long, y = Lat, color = sub_area)) +
-  geom_point() +
-  coord_cartesian(expand = 0) +
-  geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
-  theme_classic(base_size = 16) +
-  ggtitle("Stomach data")
-
-p1a/p1b/p1c
-
-ggsave("figures/sub_areas_full.png", width = 9, height = 9, dpi = 600)
 
 # This is what the ICES areas would look like
 p2a <- ggplot(pred_grid2, aes(x = lon, y = lat, fill = SubDiv)) +

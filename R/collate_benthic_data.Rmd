@@ -252,6 +252,8 @@ dat <- dat %>%
   mutate(Year = as.numeric(Year),
          Month = as.numeric(Month),
          Day = as.numeric(Day))
+
+ggplot(dat, aes(Month)) + geom_histogram() + facet_wrap(~ Year)
 ```
 
 Add in oceanographic variables. Start with oxygen
