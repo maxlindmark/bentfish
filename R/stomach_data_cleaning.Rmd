@@ -29,7 +29,6 @@ Kevin:
   - BITS (trawl data on cod & flounder) * Federico's BITS data should contain all data that Kevin has used, but with more columns 
   - BIAS (pelagic trawl data)
 
-
 **Data to add:**
   - BITS (trawl data on cod & flounder)
   - BIAS (pelagic trawl data)
@@ -56,6 +55,7 @@ library(forcats)
 library(gapminder)
 library(viridis)
 library(ggridges)
+library(raster)
 
 # Define a function for plotting maps...
 theme_map <- function () { 
@@ -417,37 +417,56 @@ To be analyzed during fall 2020:
 ## 2. Add new data - BITS
 ```{r new bits, message=FALSE, results="hide"}
 bits_2017_q4_fle <- read.csv("data/stomach_data/2017/02.01.2019_database_COD_FLE.csv", sep = ";")
-bits_2018_q4_cod <- read.csv("data/stomach_data/2018/BITS Q4 2018_COD.csv", sep = ";")
 bits_2018_q1_fle <- read.csv("data/stomach_data/2018/BITS Q1 2018_FLE.csv", sep = ";")
 bits_2018_q1_cod <- read.csv("data/stomach_data/2018/BITS Q1 2018_COD.csv", sep = ";")
+bits_2018_q4_cod <- read.csv("data/stomach_data/2018/BITS Q4 2018_COD.csv", sep = ";")
+
+bits_2019_q4_cod <- read.csv("data/stomach_data/2019/COD_2019_Q4_BITS.csv", sep = ";")
+bits_2019_q4_fle <- read.csv("data/stomach_data/2019/FLE_2019_Q4_BITS.csv", sep = ";")
+bits_2020_q1_cod <- read.csv("data/stomach_data/2020/COD_2020_Q1_BITS.csv", sep = ";")
+bits_2020_q1_fle <- read.csv("data/stomach_data/2020/FLE_2020_Q1_BITS.csv", sep = ";")
 
 str(bits_2017_q4_fle)
 str(bits_2018_q4_cod)
 str(bits_2018_q1_fle)
 str(bits_2018_q1_cod)
 
+str(bits_2019_q4_cod)
+str(bits_2019_q4_cod)
+str(bits_2020_q1_cod)
+str(bits_2020_q1_cod)
+
 # Bind them together, then see what columns are missing from the base data
-data.frame(bits_2018_q1_cod = colnames(bits_2018_q1_cod)[1:32],
+data.frame(bits_2017_q4_fle = colnames(bits_2017_q4_fle)[1:32],
+           bits_2018_q1_cod = colnames(bits_2018_q1_cod)[1:32],
            bits_2018_q1_fle = colnames(bits_2018_q1_fle)[1:32],
            bits_2018_q4_cod = colnames(bits_2018_q4_cod)[1:32],
-           bits_2017_q4_fle = colnames(bits_2017_q4_fle)[1:32])
+           bits_2019_q4_cod = colnames(bits_2019_q4_cod)[1:32],
+           bits_2019_q4_fle = colnames(bits_2019_q4_fle)[1:32],
+           bits_2020_q1_cod = colnames(bits_2020_q1_cod)[1:32],
+           bits_2020_q1_fle = colnames(bits_2020_q1_fle)[1:32]
+           )
 
 # Looks like we can rbind them
-temp_new <- rbind(bits_2018_q1_cod[1:32],
+temp_new <- rbind(bits_2017_q4_fle[1:32],
+                  bits_2018_q1_cod[1:32],
                   bits_2018_q1_fle[1:32],
                   bits_2018_q4_cod[1:32],
-                  bits_2017_q4_fle[1:32])
+                  bits_2019_q4_cod[1:32], 
+                  bits_2019_q4_fle[1:32], 
+                  bits_2020_q1_cod[1:32],
+                  bits_2020_q1_fle[1:32]
+                  )
 
 # Compare the column names from the df_full we merged above:
 sort(colnames(temp_new))
 sort(colnames(df_full))
 
-
-
 # Now check which columns are not in the full data but are in the new data
 colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
-# [1] "square"               "SD"                   "month"                "comment"              "parasites.in.stomach"
-# [6] "cruise"               "Size.group.code"      "Gall.bladder"         "stomach.state"
+# [1] "square"               "SD"                   "month"                "comment"             
+# [5] "parasites.in.stomach" "cruise"               "Size.group.code"      "Gall.bladder"        
+# [9] "stomach.state"
 
 # These are in fact in the full data, but under different names
 sort(colnames(df_full))
@@ -481,10 +500,11 @@ missing_cols <- sort(colnames(df_full)[!(colnames(df_full) %in% colnames(temp_ne
 missing_cols
 
 # > missing_cols
-#  [1] "Age"                    "comments"               "Date"                   "Depth.catch"            "Depthstep"             
-#  [6] "Gonad.weight.roundfish" "Ices.rect"               "Index"                  "Lat"                    "Liver.weight.roundfish"
-# [11] "Long"                   "Number"                 "Perc.stomac.content"    "Processed"              "Q_Year"                
-# [16] "Sample.type"            "Stomach.content"        "transect"              
+#  [1] "Age"                    "comments"               "Date"                   "Depth.catch"           
+#  [5] "Depthstep"              "Gonad.weight.roundfish" "Ices.rect"              "Index"                 
+#  [9] "Lat"                    "Liver.weight.roundfish" "Long"                   "Number"                
+# [13] "Perc.stomac.content"    "Processed"              "Q_Year"                 "Sample.type"           
+# [17] "source"                 "Stomach.content"        "transect"             
 
 # Now read the bottom trawl data and the biological data from the trawls
 # Read in trawl data. There's one file for cod and one for flounder
@@ -512,6 +532,8 @@ bits_bio_data <- bits_bio_data %>% mutate(Q_Year = paste(Quarter, Year, sep = "_
 
 temp_new <- temp_new %>% mutate(Q_Year = paste(Quarter, Year, sep = "_"))
 
+temp_new %>% filter(Quarter == 1 & Year == 2020 & HN == 58 & Predator.code == "FLE")
+
 # Now filter the trawl and biological data
 bits_trawl_data <- bits_trawl_data %>% filter(Q_Year %in% unique(temp_new$Q_Year))
 bits_bio_data <- bits_bio_data %>% filter(Q_Year %in% unique(temp_new$Q_Year))
@@ -521,7 +543,7 @@ bits_bio_data <- bits_bio_data %>% filter(Q_Year %in% unique(temp_new$Q_Year))
 bits_bio_data <- bits_bio_data %>% rename("Sample" = "Otolith.no") # There are three "Otolith.no" that are the same in two different fish id
 
 # Make sample numeric in the temp_new data
-temp_new$Sample <- as.numeric(temp_new$Sample)
+# temp_new$Sample <- as.numeric(temp_new$Sample)
 
 # Add a new species code in the trawl data that matches the stomach data 
 bits_bio_data <- bits_bio_data %>% mutate(Predator.code = ifelse(Species == "Cod", "COD", "FLE"))
@@ -536,6 +558,8 @@ bits_bio_data$bio_ID <- paste(bits_bio_data$Year,
                               bits_bio_data$Sample,
                               bits_bio_data$Predator.code,
                               sep = "_")
+
+ggplot(bits_bio_data, aes(Sample, Fishno)) + geom_point()
 
 # Check IDS
 bits_bio_data %>% 
@@ -582,7 +606,7 @@ sort(unique(missing_ids_in_bio))
 # See how much data is gone when I remove them. 
 temp_new %>% filter(!bio_ID %in% missing_ids_in_bio)
 
-# Only 55 rows without bio info. Perhaps not that much!
+# Only 839 rows without bio info. Perhaps not that much!
 
 # In order to not add in data from the biological data for which we don't have stomach data,
 # subset the id's in the bio data that are in the stomach data and also remove columns that are the same in both data sets
@@ -597,7 +621,8 @@ bits_bio_data_sub <- bits_bio_data %>%
 # Now do a left_join to get bio data into the temp_new data
 temp_new <- left_join(temp_new, bits_bio_data_sub, by = "bio_ID")
 
-# Again, 55 rows without any match in the trawl data
+# Again, 839 rows without any match in the trawl data
+## THIS IS BECAUSE THE PREDATOR CODE IS MISSING IN SOME TABS IN EXCEL!!! NEED TO CLEAN EACH CSV 
 
 # OK, now do the trawl data. First find a unique ID
 # Add a new species code in the trawl data that matches the stomach data 
@@ -804,16 +829,20 @@ Now we can add the BIAS data in the same way:
 ## 3. Add new data - BIAS
 ```{r new bias, message=FALSE, results="hide"}
 bias_2018_q4_cod <- read.csv("data/stomach_data/2018/BIAS_2018_COD.csv", sep = ";")
+bias_2019_q4_cod <- read.csv("data/stomach_data/2019/COD_2019_BIAS.csv", sep = ";")
 
-str(bias_2018_q4_cod)
+colnames(bias_2018_q4_cod)
+colnames(bias_2019_q4_cod)
 
-temp_new <- bias_2018_q4_cod %>% rename("SubDiv" = "SD",
-                                        "Square" = "square",
-                                        "Month" = "month",
-                                        "Comment" = "comment",
-                                        "Parasites.in.stomach" = "parasites.in.stomach",
-                                        "Cruise" = "cruise",
-                                        "Gall.content" = "Gall.bladder")
+bias_2018_2019 <- rbind(bias_2018_q4_cod[, 1:32], bias_2019_q4_cod[, 1:32])
+
+temp_new <- bias_2018_2019 %>% rename("SubDiv" = "SD",
+                                      "Square" = "square",
+                                      "Month" = "month",
+                                      "Comment" = "comment",
+                                      "Parasites.in.stomach" = "parasites.in.stomach",
+                                      "Cruise" = "cruise",
+                                      "Gall.content" = "Gall.bladder")
 
 # Still unique columns in the new data? Yes. Remove them as I can't find their equivalent cols
 diff_cols <- colnames(temp_new)[!colnames(temp_new) %in% colnames(df_full)]
@@ -978,7 +1007,6 @@ bias_trawl_data_distinct_sub <- bias_trawl_data_distinct %>%
 
 # Now do a left_join to get trawl data into the temp_new data
 temp_new <- left_join(temp_new, bias_trawl_data_distinct_sub, by = "trawl_ID")
-
 ```
 
 Now that we have linked stomach, haul and biological info in the new data, clean it up a little bit before merging with the older data
@@ -1109,6 +1137,8 @@ temp_new_sub$HN <- as.integer(temp_new_sub$HN)
 
 # Add a source for proof checking later!
 temp_new_sub$source <- "Max Postdoc"
+
+temp_new_sub$Day <- as.integer(temp_new_sub$Day)
 
 full_dat <- bind_rows(full_dat, temp_new_sub)
 ```
@@ -1252,23 +1282,35 @@ unique(full_dat$comments)
 Now create a new sub-area that matches the benthic data. This is semi-arbitrary, loosely based on the subdivision boundaries (see make_pred_grid)
 
 ```{r add new sub-area, message=FALSE}
-func <- 
-  getURL("https://raw.githubusercontent.com/maxlindmark/bentfish/main/R/functions/get_sub_area.R", 
-         ssl.verifypeer = FALSE)
+# Add ICES subdivisions
+shape <- shapefile("data/ICES_StatRec_mapto_ICES_Areas/StatRec_map_Areas_Full_20170124.shp")
 
-eval(parse(text = func))
+full_dat <- full_dat %>% drop_na(Lat) %>% drop_na(Long)
 
-full_dat <- get_sub_area(dat = full_dat, lat = full_dat$Lat, lon = full_dat$Long)
+pts <- SpatialPoints(cbind(full_dat$Long, full_dat$Lat), 
+                     proj4string = CRS(proj4string(shape)))
 
-full_dat <- full_dat %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
+full_dat$SubDiv <- over(pts, shape)$Area_27
 
-ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
+# Rename subdivisions to the more common names and do some more filtering (by sub div and area)
+sort(unique(full_dat$SubDiv))
+
+full_dat <- full_dat %>% 
+  mutate(SubDiv = factor(SubDiv),
+         SubDiv = fct_recode(SubDiv,
+                         "24" = "3.d.24",
+                         "25" = "3.d.25",
+                         "26" = "3.d.26",
+                         "27" = "3.d.27",
+                         "28" = "3.d.28.2",
+                         "29" = "3.d.29"),
+         SubDiv = as.character(SubDiv)) 
 
 ggplot(full_dat, aes(x = Long, y = Lat, color = SubDiv)) +
   geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
-  coord_sf(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) + 
+  coord_sf(xlim = c(14, 21), ylim = c(54.5, 59.5)) + 
   theme_classic(base_size = 20) +
   NULL
 
@@ -1277,10 +1319,10 @@ ggsave("figures/sub_areas_stomach.png", width = 9, height = 9, dpi = 600)
 
 Now save and wait for the next data!
 ```{r, save}
-write.csv(full_dat, "data/for_analysis/stomach/full_stomach_data_21.06.09.csv")
+write.csv(full_dat, "data/for_analysis/stomach/full_stomach_data_21.10.25.csv")
 
 # Only recent years
 sub_full_dat <- filter(full_dat, Year > 2014)
-write.csv(sub_full_dat, "data/for_analysis/stomach/2015-2018_stomach_data_21.06.09.csv")
+write.csv(sub_full_dat, "data/for_analysis/stomach/2015-2018_stomach_data_21.10.25.csv")
 ```
 

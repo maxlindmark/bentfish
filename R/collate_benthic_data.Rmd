@@ -684,11 +684,11 @@ eval(parse(text = func))
 
 dat <- get_sub_area(dat = dat, lat = dat$Latitud, lon = dat$Longitud)
 
-dat <- dat %>% drop_na(sub_area) %>% mutate(sub_area = as.factor(sub_area))
+dat <- dat %>% drop_na(SubDiv) %>% mutate(SubDiv = as.factor(SubDiv))
 
 ymin = 55; ymax = 58; xmin = 12.5; xmax = 20
 
-ggplot(dat, aes(x = Longitud, y = Latitud, color = sub_area)) +
+ggplot(dat, aes(x = Longitud, y = Latitud, color = SubDiv)) +
   geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
@@ -696,7 +696,7 @@ ggplot(dat, aes(x = Longitud, y = Latitud, color = sub_area)) +
   theme_classic(base_size = 20) +
   NULL
 
-ggsave("figures/sub_areas_benthicdata.png", width = 9, height = 9, dpi = 600)
+ggsave("figures/SubDiv_benthicdata.png", width = 9, height = 9, dpi = 600)
 ```
 
 Now add in the species 
@@ -786,7 +786,7 @@ dat2 <- dat %>%
          "year" = "artal",
          "lon" = "Longitud",
          "lat" = "Latitud") %>% 
-  dplyr::select(year, month, day, lon, lat, abundance, biomass, species_group, depth, prov_nr, provID, sub_area, SubDiv, taxa)
+  dplyr::select(year, month, day, lon, lat, abundance, biomass, species_group, depth, prov_nr, provID, SubDiv, taxa)
 
 # Now we can save the data
 write.csv(dat2, "data/benthic_data_complete.csv")
