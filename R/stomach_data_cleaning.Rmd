@@ -1279,23 +1279,46 @@ unique(full_dat$Sample.type)
 unique(full_dat$comments)
 ```
 
-Now create a new sub-area that matches the benthic data. This is semi-arbitrary, loosely based on the subdivision boundaries (see make_pred_grid)
+Add in ICES sub-divisions
 
-```{r add new sub-area, message=FALSE}
+```{r add new sub-area, message=FALSE, warning=FALSE}
 # Add ICES subdivisions
 shape <- shapefile("data/ICES_StatRec_mapto_ICES_Areas/StatRec_map_Areas_Full_20170124.shp")
 
-full_dat <- full_dat %>% drop_na(Lat) %>% drop_na(Long)
+# For that we need lat and long. We don't have that for the old data. I will therefore 
+# use the mapplots::ices.rect(rectangle) to get the coordinates of the centre of the lat long
+# First add a column saying if coordinates are true of they are base in rectangle centre
+#full_dat <-
+full_dat <- full_dat %>% 
+  mutate(Lat = replace_na(Lat, -99),
+         Long = replace_na(Long, -99)) %>% 
+  mutate(coord_from_ices_rect_centre =
+         ifelse(Lat == -99 & Long == -99 & !Ices.rect %in% c("", "NANANA"), "Y", "N"))
 
-pts <- SpatialPoints(cbind(full_dat$Long, full_dat$Lat), 
-                     proj4string = CRS(proj4string(shape)))
+# This gives a DF of lat and long, change to a vector then add in!!
+latlon_df <- mapplots::ices.rect(full_dat$Ices.rect)
+  
+full_dat <- full_dat %>% mutate(Lat = ifelse(Lat == -99, latlon_df$lat, Lat),
+                                Long = ifelse(Long == -99, latlon_df$lon, Long))
 
-full_dat$SubDiv <- over(pts, shape)$Area_27
-
-# Rename subdivisions to the more common names and do some more filtering (by sub div and area)
-sort(unique(full_dat$SubDiv))
+# The below function does not work with NAs. Use the function on the non NA coordinates,
+# then bind_rows()-them
 
 full_dat <- full_dat %>% 
+  mutate(Lat = replace_na(Lat, -99),
+         Long = replace_na(Long, -99))
+
+full_dat_coord <- full_dat %>% filter(!Lat == -99 & !Long == -99)
+
+pts <- SpatialPoints(cbind(full_dat_coord$Long, full_dat_coord$Lat), 
+                     proj4string = CRS(proj4string(shape)))
+
+full_dat_coord$SubDiv <- over(pts, shape)$Area_27
+
+# Rename subdivisions to the more common names and do some more filtering (by sub div and area)
+sort(unique(full_dat_coord$SubDiv))
+
+full_dat_coord <- full_dat_coord %>% 
   mutate(SubDiv = factor(SubDiv),
          SubDiv = fct_recode(SubDiv,
                          "24" = "3.d.24",
@@ -1306,7 +1329,7 @@ full_dat <- full_dat %>%
                          "29" = "3.d.29"),
          SubDiv = as.character(SubDiv)) 
 
-ggplot(full_dat, aes(x = Long, y = Lat, color = SubDiv)) +
+ggplot(full_dat_coord, aes(x = Long, y = Lat, color = SubDiv)) +
   geom_point(size = 0.5) +
   coord_cartesian(expand = 0) +
   geom_sf(data = world, inherit.aes = F, size = 0.2) +
@@ -1314,15 +1337,26 @@ ggplot(full_dat, aes(x = Long, y = Lat, color = SubDiv)) +
   theme_classic(base_size = 20) +
   NULL
 
+# Now do bind-rows to get back in the data that do not have sub-division info
+full_dat2 <- bind_rows(full_dat_coord, filter(full_dat, Lat == -99 & Long == -99))
+
+nrow(full_dat2)
+nrow(full_dat)
+
+# Replace 99 coordinates with NA
+full_dat2 <- full_dat2 %>%
+  mutate(Long = ifelse(Long == -99, NA, Long),
+         Lat = ifelse(Lat == -99, NA, Lat))
+  
 ggsave("figures/sub_areas_stomach.png", width = 9, height = 9, dpi = 600)
 ```
 
 Now save and wait for the next data!
 ```{r, save}
-write.csv(full_dat, "data/for_analysis/stomach/full_stomach_data_21.10.25.csv")
+sort(unique(full_dat2$Year))
+write.csv(full_dat2, "data/for_analysis/stomach/full_stomach_data_21.10.25.csv")
 
 # Only recent years
-sub_full_dat <- filter(full_dat, Year > 2014)
+sub_full_dat <- filter(full_dat2, Year > 2014)
 write.csv(sub_full_dat, "data/for_analysis/stomach/2015-2018_stomach_data_21.10.25.csv")
 ```
-
